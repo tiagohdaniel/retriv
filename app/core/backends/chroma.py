@@ -113,6 +113,9 @@ class ChromaVectorStore(VectorStoreBase):
 
         return list(sources.values())
 
+    def ping(self) -> None:
+        self.collection.count()
+
     def _build_where(self, source_ids: list[str] | None) -> dict | None:
         if not source_ids:
             return None
