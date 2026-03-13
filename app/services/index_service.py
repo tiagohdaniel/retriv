@@ -1,5 +1,6 @@
 from app.schemas.models import IndexRequest, IndexResponse
 from app.core.logging_config import get_logger
+from app.core.metrics import documents_indexed_total, chunks_indexed_total
 
 logger = get_logger("retriv.index")
 
@@ -35,5 +36,7 @@ class IndexService:
             extra_metadata=request.metadata,
         )
 
+        documents_indexed_total.inc()
+        chunks_indexed_total.inc(len(chunks))
         logger.info("index_completed", source_id=request.source_id, chunks_indexed=len(chunks))
         return IndexResponse(source_id=request.source_id, chunks_indexed=len(chunks))
