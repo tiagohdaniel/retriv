@@ -34,3 +34,8 @@ class VectorStoreBase(ABC):
 
     @abstractmethod
     def list_sources(self) -> list[dict]: ...
+
+    @abstractmethod
+    def ping(self) -> None:
+        """Verifica conectividade com o backend. Lança exceção se indisponível."""
+        ...
