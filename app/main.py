@@ -1,5 +1,9 @@
-from fastapi import FastAPI
+import traceback
+
+import structlog
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -10,6 +14,8 @@ from app.api import routes_index, routes_ask, routes_sources
 from app.core.rate_limit import limiter
 from app.core.logging_config import configure_logging_from_settings
 from app.middleware.logging_middleware import RequestLoggingMiddleware
+
+logger = structlog.get_logger(__name__)
 
 configure_logging_from_settings()
 
@@ -32,6 +38,18 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.error(
+        "unhandled_exception",
+        method=request.method,
+        path=request.url.path,
+        exc_type=type(exc).__name__,
+        traceback=traceback.format_exc(),
+    )
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(
