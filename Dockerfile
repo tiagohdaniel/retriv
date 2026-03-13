@@ -23,7 +23,14 @@ print('Embedding model cached.')"
 COPY . .
 
 ENV PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus_multiproc
-RUN mkdir -p /tmp/prometheus_multiproc
+
+# Non-root user — least privilege principle
+RUN groupadd --gid 1001 appgroup \
+    && useradd --uid 1001 --gid appgroup --no-create-home appuser \
+    && mkdir -p /tmp/prometheus_multiproc \
+    && chown -R appuser:appgroup /app /tmp/prometheus_multiproc
+
+USER appuser
 
 EXPOSE 8001
 
