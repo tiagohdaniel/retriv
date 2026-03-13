@@ -7,8 +7,11 @@ from app.core.chunker import TextChunker
 from app.core.embeddings import create_embedding_service
 from app.core.vector_store import VectorStoreBase
 from app.core.llm_client import LLMClientBase
+from app.core.observability import ObservabilityBase
 from app.core.backends.chroma import ChromaVectorStore
 from app.core.backends.anthropic import AnthropicClient
+from app.core.backends.null_observability import NullObservability
+from app.core.backends.langfuse_observability import LangfuseObservability
 
 
 @lru_cache
@@ -48,4 +51,33 @@ def get_chunker() -> TextChunker:
 @lru_cache
 def get_llm_client() -> LLMClientBase:
     settings = get_settings()
-    return AnthropicClient(api_key=settings.anthropic_api_key, model=settings.model_name)
+
+    if settings.llm_backend == "anthropic":
+        return AnthropicClient(
+            api_key=settings.anthropic_api_key,
+            model=settings.model_name,
+            timeout=settings.llm_timeout,
+        )
+
+    raise ValueError(
+        f"Unsupported LLM_BACKEND '{settings.llm_backend}'. "
+        f"Supported values: 'anthropic'. "
+        f"To add a new provider: create app/core/backends/<provider>.py, "
+        f"implement LLMClientBase, and add an elif branch here."
+    )
+
+
+@lru_cache
+def get_observability() -> ObservabilityBase:
+    settings = get_settings()
+
+    if not settings.eval_enabled:
+        return NullObservability()
+
+    return LangfuseObservability(
+        public_key=settings.langfuse_public_key,
+        secret_key=settings.langfuse_secret_key,
+        host=settings.langfuse_host,
+        anthropic_api_key=settings.anthropic_api_key,
+        eval_model=settings.eval_model,
+    )

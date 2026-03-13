@@ -1,15 +1,20 @@
 from app.schemas.models import AskRequest, AskResponse, SourceReference
+from app.core.logging_config import get_logger
+from app.core.metrics import llm_tokens_total, ask_no_context_total
+
+logger = get_logger("retriv.ask")
 
 
 class AskService:
     """Orchestrates the RAG pipeline: embed → search → prompt → LLM → response."""
 
-    def __init__(self, embedding_service, vector_store, llm_client):
+    def __init__(self, embedding_service, vector_store, llm_client, observability=None):
         self.embedding = embedding_service
         self.vector_store = vector_store
         self.llm = llm_client
+        self.observability = observability
 
-    async def ask(self, request: AskRequest) -> AskResponse:
+    async def ask(self, request: AskRequest, background_tasks=None) -> AskResponse:
         query_embedding = self.embedding.encode([request.question])[0]
 
         docs = self.vector_store.search(
@@ -21,6 +26,8 @@ class AskService:
 
         # skip LLM call if no relevant context — avoids hallucination and saves tokens
         if not docs:
+            ask_no_context_total.inc()
+            logger.info("ask_no_context", question_len=len(request.question))
             return AskResponse(
                 answer="No relevant documentation found. "
                        "Make sure you have indexed content via POST /index.",
@@ -30,11 +37,31 @@ class AskService:
         result = await self.llm.generate(prompt=prompt)
         sources = self._build_sources(docs)
 
+        model = result.get("model", "unknown")
+        tokens = result.get("tokens_used", 0)
+        llm_tokens_total.labels(model=model).inc(tokens)
+
+        logger.info(
+            "ask_completed",
+            docs_retrieved=len(docs),
+            tokens_used=tokens,
+            model=model,
+        )
+
+        if self.observability and background_tasks is not None:
+            background_tasks.add_task(
+                self.observability.trace_query,
+                question=request.question,
+                contexts=[doc["document"] for doc in docs],
+                answer=result["answer"],
+                metadata={"model": model, "docs_retrieved": len(docs), "tokens_used": tokens},
+            )
+
         return AskResponse(
             answer=result["answer"],
             sources=sources,
-            tokens_used=result.get("tokens_used", 0),
-            model=result.get("model", ""),
+            tokens_used=tokens,
+            model=model,
         )
 
     async def ask_stream(self, request: AskRequest):
@@ -48,6 +75,8 @@ class AskService:
         )
 
         if not docs:
+            ask_no_context_total.inc()
+            logger.info("ask_stream_no_context", question_len=len(request.question))
             yield {"type": "token", "content": "No relevant documentation found. Make sure you have indexed content via POST /index."}
             return
 
@@ -58,11 +87,19 @@ class AskService:
             if isinstance(chunk, str):
                 yield {"type": "token", "content": chunk}
             else:
+                tokens = chunk.get("tokens_used", 0)
+                model = chunk.get("model", "unknown")
+                llm_tokens_total.labels(model=model).inc(tokens)
+                logger.info(
+                    "ask_stream_completed",
+                    docs_retrieved=len(docs),
+                    tokens_used=tokens,
+                )
                 yield {
                     "type": "done",
                     "sources": [s.model_dump() for s in sources],
-                    "tokens_used": chunk.get("tokens_used", 0),
-                    "model": chunk.get("model", ""),
+                    "tokens_used": tokens,
+                    "model": model,
                 }
 
     def _build_prompt(self, question: str, docs: list[dict]) -> str:

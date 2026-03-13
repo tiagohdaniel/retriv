@@ -92,10 +92,9 @@ class ChromaVectorStore(VectorStoreBase):
             self.collection.delete(ids=ids)
         return len(ids)
 
-    # TODO: pagination — this loads all metadata into memory, will be slow at scale
-    def list_sources(self) -> list[dict]:
+    def list_sources(self, limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
         if self.collection.count() == 0:
-            return []
+            return [], 0
 
         result = self.collection.get(include=["metadatas"])
         sources: dict[str, dict] = {}
@@ -111,7 +110,13 @@ class ChromaVectorStore(VectorStoreBase):
                 }
             sources[sid]["chunks_count"] += 1
 
-        return list(sources.values())
+        all_sources = list(sources.values())
+        total = len(all_sources)
+        page = all_sources[offset: offset + limit]
+        return page, total
+
+    def ping(self) -> None:
+        self.collection.count()
 
     def _build_where(self, source_ids: list[str] | None) -> dict | None:
         if not source_ids:

@@ -11,11 +11,38 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-download embedding model at build time so the first request is instant.
+# fastembed downloads the ONNX model from HuggingFace and caches it locally.
+# Override at build time with: docker build --build-arg EMBEDDING_MODEL=other/model
+ARG EMBEDDING_MODEL=nomic-ai/nomic-embed-text-v1.5
+RUN python -c "\
+from fastembed import TextEmbedding; \
+TextEmbedding(model_name='${EMBEDDING_MODEL}'); \
+print('Embedding model cached.')"
+
 COPY . .
+
+ENV PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus_multiproc
+
+# Non-root user — least privilege principle
+RUN groupadd --gid 1001 appgroup \
+    && useradd --uid 1001 --gid appgroup --no-create-home appuser \
+    && mkdir -p /tmp/prometheus_multiproc \
+    && chown -R appuser:appgroup /app /tmp/prometheus_multiproc
+
+USER appuser
 
 EXPOSE 8001
 
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
     CMD curl -f http://localhost:8001/health || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
+CMD gunicorn app.main:app \
+    --config gunicorn.conf.py \
+    --workers ${WEB_CONCURRENCY:-2} \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --bind 0.0.0.0:8001 \
+    --timeout 120 \
+    --graceful-timeout 30 \
+    --access-logfile - \
+    --error-logfile -
