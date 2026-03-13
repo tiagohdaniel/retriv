@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     # Observability
     metrics_enabled: bool = True    # exposes GET /metrics (Prometheus format)
 
+    # RAG evaluation — disabled by default (requires Langfuse account)
+    eval_enabled: bool = False
+    eval_model: str = "claude-haiku-4-5-20251001"  # lightweight model for LLM-as-judge
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "https://cloud.langfuse.com"
+
     app_version: str = "1.0.0"
 
     model_config = {"env_file": ".env", "extra": "ignore"}
