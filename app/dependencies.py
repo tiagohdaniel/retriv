@@ -48,8 +48,17 @@ def get_chunker() -> TextChunker:
 @lru_cache
 def get_llm_client() -> LLMClientBase:
     settings = get_settings()
-    return AnthropicClient(
-        api_key=settings.anthropic_api_key,
-        model=settings.model_name,
-        timeout=settings.llm_timeout,
+
+    if settings.llm_backend == "anthropic":
+        return AnthropicClient(
+            api_key=settings.anthropic_api_key,
+            model=settings.model_name,
+            timeout=settings.llm_timeout,
+        )
+
+    raise ValueError(
+        f"Unsupported LLM_BACKEND '{settings.llm_backend}'. "
+        f"Supported values: 'anthropic'. "
+        f"To add a new provider: create app/core/backends/<provider>.py, "
+        f"implement LLMClientBase, and add an elif branch here."
     )
