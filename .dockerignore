@@ -3,5 +3,10 @@ __pycache__
 *.pyc
 *.pyo
 .git
+.gitignore
 chroma_data
 .env
+.env.example
+tests/
+CLAUDE.md
+README.md

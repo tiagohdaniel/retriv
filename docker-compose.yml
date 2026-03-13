@@ -1,14 +1,28 @@
 services:
+  chromadb:
+    image: chromadb/chroma:latest
+    volumes:
+      - chroma_data:/chroma/chroma
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   api:
     build: .
     ports:
-      - "8000:8000"
+      - "8001:8001"
     env_file:
       - .env
     environment:
-      - CHROMA_PERSIST_DIR=/app/chroma_data
-    volumes:
-      - chroma_data:/app/chroma_data
+      - CHROMA_MODE=server
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+    depends_on:
+      chromadb:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
