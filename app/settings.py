@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # LLM
+    llm_backend: str = "anthropic"  # anthropic | openai (future)
     anthropic_api_key: str = ""
     model_name: str = "claude-sonnet-4-20250514"
     llm_timeout: float = 30.0
