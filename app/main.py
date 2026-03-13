@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.schemas.models import HealthResponse
 from app.dependencies import get_settings
@@ -43,6 +44,9 @@ app.add_middleware(
 app.include_router(routes_index.router, tags=["indexing"])
 app.include_router(routes_ask.router, tags=["search"])
 app.include_router(routes_sources.router, tags=["sources"])
+
+if _settings.metrics_enabled:
+    Instrumentator().instrument(app).expose(app, include_in_schema=False, tags=["system"])
 
 
 @app.get("/health", response_model=HealthResponse, tags=["system"])

@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     cors_origins: str = "*"         # comma-separated list or "*"
     web_concurrency: int = 2
 
+    # Observability
+    metrics_enabled: bool = True    # exposes GET /metrics (Prometheus format)
+
     app_version: str = "1.0.0"
 
     model_config = {"env_file": ".env", "extra": "ignore"}
