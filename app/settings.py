@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     llm_timeout: float = 30.0
 
     # Embeddings
-    embedding_model: str = "all-MiniLM-L6-v2"
+    embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
 
     # Vector store
     chroma_mode: str = "embedded"   # embedded | server

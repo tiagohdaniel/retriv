@@ -1,24 +1,39 @@
 import hashlib
 
-EMBEDDING_DIM = 384  # all-MiniLM-L6-v2 output dimensions
+EMBEDDING_DIM = 768  # nomic-embed-text-v1.5 output dimensions
 
 
-class SentenceTransformerEmbedding:
-    """Level 1 — full sentence-transformers model."""
+class FastEmbedEmbedding:
+    """Primary embedding via fastembed (ONNX Runtime, no PyTorch).
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
-        from sentence_transformers import SentenceTransformer
-        self.model = SentenceTransformer(model_name)
+    fastembed downloads models in ONNX format from HuggingFace and handles
+    tokenization, mean pooling, and L2 normalization internally.
+    Designed specifically for production RAG stacks.
+
+    Supports nomic-embed-text-v1.5 natively. The model optionally uses
+    instruction prefixes for best quality:
+      - documents: "search_document: " + text
+      - queries:   "search_query: " + text
+    Prefix injection requires task-type awareness in encode() — deferred to
+    feat/embedding-task-types. Without prefixes the model still significantly
+    outperforms all-MiniLM-L6-v2.
+    """
+
+    def __init__(self, model_name: str) -> None:
+        from fastembed import TextEmbedding
+        self.model = TextEmbedding(model_name=model_name)
 
     def encode(self, texts: list[str]) -> list[list[float]]:
-        return self.model.encode(texts).tolist()
+        return [emb.tolist() for emb in self.model.embed(texts)]
 
 
 class ONNXEmbedding:
-    """Level 2 — ONNX Runtime via ChromaDB (same model, lighter runtime).
+    """ONNX Runtime via ChromaDB built-in — all-MiniLM-L6-v2 only.
 
-    Downloads all-MiniLM-L6-v2 in ONNX format (~87MB) on first use.
-    Cached at ~/.cache/chroma/onnx_models/
+    Kept as fallback for MiniLM-family models when fastembed is unavailable.
+    Downloads ~87MB on first use. Not used for other models: a different model
+    in ONNX would produce vectors of a different dimension, silently breaking
+    stored embeddings.
     """
 
     def __init__(self) -> None:
@@ -31,7 +46,7 @@ class ONNXEmbedding:
 
 
 class HashEmbedding:
-    """Level 3 — deterministic fallback. No semantic similarity.
+    """Deterministic fallback — no semantic similarity.
 
     Used in tests and environments where no model is available.
     Vectors are reproducible but NOT semantically meaningful.
@@ -46,17 +61,23 @@ class HashEmbedding:
         return [(b / 127.5 - 1.0) for b in extended]
 
 
-def create_embedding_service(model_name: str = "all-MiniLM-L6-v2"):
+def create_embedding_service(model_name: str = "nomic-ai/nomic-embed-text-v1.5"):
     """Factory with 3-level fallback.
 
-    SentenceTransformer → ONNX → HashEmbedding
+    FastEmbed/ONNX (preferred) → ONNX MiniLM (MiniLM models only) → HashEmbedding
+
+    The MiniLM ONNX fallback only activates for MiniLM-family models to avoid
+    silently returning wrong-dimension vectors for other models.
     """
     try:
-        return SentenceTransformerEmbedding(model_name)
+        return FastEmbedEmbedding(model_name)
     except Exception:
         pass
-    try:
-        return ONNXEmbedding()
-    except Exception:
-        pass
+
+    if "minilm" in model_name.lower():
+        try:
+            return ONNXEmbedding()
+        except Exception:
+            pass
+
     return HashEmbedding()

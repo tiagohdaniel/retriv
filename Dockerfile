@@ -11,6 +11,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-download embedding model at build time so the first request is instant.
+# fastembed downloads the ONNX model from HuggingFace and caches it locally.
+# Override at build time with: docker build --build-arg EMBEDDING_MODEL=other/model
+ARG EMBEDDING_MODEL=nomic-ai/nomic-embed-text-v1.5
+RUN python -c "\
+from fastembed import TextEmbedding; \
+TextEmbedding(model_name='${EMBEDDING_MODEL}'); \
+print('Embedding model cached.')"
+
 COPY . .
 
 EXPOSE 8001
