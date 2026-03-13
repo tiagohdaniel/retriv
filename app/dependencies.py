@@ -6,8 +6,9 @@ from app.settings import Settings
 from app.core.chunker import TextChunker
 from app.core.embeddings import create_embedding_service
 from app.core.vector_store import VectorStoreBase
+from app.core.llm_client import LLMClientBase
 from app.core.backends.chroma import ChromaVectorStore
-from app.core.llm_client import AnthropicClient
+from app.core.backends.anthropic import AnthropicClient
 
 
 @lru_cache
@@ -45,6 +46,6 @@ def get_chunker() -> TextChunker:
 
 
 @lru_cache
-def get_llm_client() -> AnthropicClient:
+def get_llm_client() -> LLMClientBase:
     settings = get_settings()
     return AnthropicClient(api_key=settings.anthropic_api_key, model=settings.model_name)
