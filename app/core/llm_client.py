@@ -1,46 +1,20 @@
-from anthropic import AsyncAnthropic
+from abc import ABC, abstractmethod
 
 
-SYSTEM_PROMPT = """You are a technical documentation assistant.
-Answer questions based ONLY on the provided documentation excerpts.
-If the documentation does not contain enough information, say so clearly.
-Be concise, accurate, and cite the source document when relevant."""
+class LLMClientBase(ABC):
+    """Interface for LLM provider backends.
 
+    All backends must implement generate() and stream().
+    Services depend only on this interface — never on a concrete provider.
+    Swapping providers (Anthropic → OpenAI, Gemini, etc.) requires
+    only a new implementation and a config change.
 
-class AnthropicClient:
-    """Async client for Anthropic Claude."""
+    generate() return dict keys: answer (str), tokens_used (int), model (str)
+    stream()   yields: str tokens, then a final dict with tokens_used and model
+    """
 
-    def __init__(self, api_key: str = "", model: str = "claude-sonnet-4-20250514"):
-        self.model = model
-        self.client = AsyncAnthropic(api_key=api_key)
+    @abstractmethod
+    async def generate(self, prompt: str, max_tokens: int = 1000) -> dict: ...
 
-    async def stream(self, prompt: str, max_tokens: int = 1000):
-        """Yields text tokens as they are generated."""
-        async with self.client.messages.stream(
-            model=self.model,
-            max_tokens=max_tokens,
-            temperature=0,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
-        ) as stream:
-            async for text in stream.text_stream:
-                yield text
-            message = await stream.get_final_message()
-            yield {
-                "tokens_used": message.usage.input_tokens + message.usage.output_tokens,
-                "model": self.model,
-            }
-
-    async def generate(self, prompt: str, max_tokens: int = 1000) -> dict:
-        message = await self.client.messages.create(
-            model=self.model,
-            max_tokens=max_tokens,
-            temperature=0,  # deterministic output
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return {
-            "answer": message.content[0].text,
-            "tokens_used": message.usage.input_tokens + message.usage.output_tokens,
-            "model": self.model,
-        }
+    @abstractmethod
+    async def stream(self, prompt: str, max_tokens: int = 1000): ...
