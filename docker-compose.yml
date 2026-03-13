@@ -21,6 +21,7 @@ services:
       - CHROMA_HOST=chromadb
       - CHROMA_PORT=8000
       - WEB_CONCURRENCY=${WEB_CONCURRENCY:-2}
+      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus_multiproc
     depends_on:
       chromadb:
         condition: service_healthy
