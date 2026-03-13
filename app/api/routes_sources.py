@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.schemas.models import SourcesResponse, SourceItem
 from app.dependencies import get_vector_store
+from app.core.auth import verify_api_key
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(verify_api_key)])
 
 
 @router.get("/sources", response_model=SourcesResponse, summary="List indexed sources")
