@@ -1,10 +1,10 @@
 import json
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from app.schemas.models import AskRequest, AskResponse
-from app.dependencies import get_embedding_service, get_vector_store, get_llm_client
+from app.dependencies import get_embedding_service, get_vector_store, get_llm_client, get_observability
 from app.services.ask_service import AskService
 from app.core.auth import verify_api_key
 from app.core.rate_limit import limiter, ask_rate_limit
@@ -17,9 +17,11 @@ router = APIRouter(dependencies=[Depends(verify_api_key)])
 async def ask_question(
     request: Request,
     body: AskRequest,
+    background_tasks: BackgroundTasks,
     embedding_service=Depends(get_embedding_service),
     vector_store=Depends(get_vector_store),
     llm_client=Depends(get_llm_client),
+    observability=Depends(get_observability),
 ):
     """Ask a natural language question over indexed documents.
 
@@ -30,8 +32,9 @@ async def ask_question(
         embedding_service=embedding_service,
         vector_store=vector_store,
         llm_client=llm_client,
+        observability=observability,
     )
-    return await service.ask(body)
+    return await service.ask(body, background_tasks=background_tasks)
 
 
 @router.post("/ask/stream", summary="Query indexed documents with streaming")

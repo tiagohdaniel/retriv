@@ -8,12 +8,13 @@ logger = get_logger("retriv.ask")
 class AskService:
     """Orchestrates the RAG pipeline: embed → search → prompt → LLM → response."""
 
-    def __init__(self, embedding_service, vector_store, llm_client):
+    def __init__(self, embedding_service, vector_store, llm_client, observability=None):
         self.embedding = embedding_service
         self.vector_store = vector_store
         self.llm = llm_client
+        self.observability = observability
 
-    async def ask(self, request: AskRequest) -> AskResponse:
+    async def ask(self, request: AskRequest, background_tasks=None) -> AskResponse:
         query_embedding = self.embedding.encode([request.question])[0]
 
         docs = self.vector_store.search(
@@ -46,6 +47,15 @@ class AskService:
             tokens_used=tokens,
             model=model,
         )
+
+        if self.observability and background_tasks is not None:
+            background_tasks.add_task(
+                self.observability.trace_query,
+                question=request.question,
+                contexts=[doc["document"] for doc in docs],
+                answer=result["answer"],
+                metadata={"model": model, "docs_retrieved": len(docs), "tokens_used": tokens},
+            )
 
         return AskResponse(
             answer=result["answer"],
