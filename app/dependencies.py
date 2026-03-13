@@ -48,4 +48,8 @@ def get_chunker() -> TextChunker:
 @lru_cache
 def get_llm_client() -> LLMClientBase:
     settings = get_settings()
-    return AnthropicClient(api_key=settings.anthropic_api_key, model=settings.model_name)
+    return AnthropicClient(
+        api_key=settings.anthropic_api_key,
+        model=settings.model_name,
+        timeout=settings.llm_timeout,
+    )

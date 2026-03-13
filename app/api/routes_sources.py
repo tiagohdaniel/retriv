@@ -1,14 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.schemas.models import SourcesResponse, SourceItem
 from app.dependencies import get_vector_store
 from app.core.auth import verify_api_key
+from app.core.rate_limit import limiter, sources_rate_limit
 
 router = APIRouter(dependencies=[Depends(verify_api_key)])
 
 
 @router.get("/sources", response_model=SourcesResponse, summary="List indexed sources")
-def list_sources(vector_store=Depends(get_vector_store)):
+@limiter.limit(sources_rate_limit)
+def list_sources(request: Request, vector_store=Depends(get_vector_store)):
     """List all indexed sources with their chunk counts."""
     raw = vector_store.list_sources()
     sources = [SourceItem(**s) for s in raw]
@@ -16,7 +18,8 @@ def list_sources(vector_store=Depends(get_vector_store)):
 
 
 @router.delete("/sources/{source_id}", summary="Delete an indexed source")
-def delete_source(source_id: str, vector_store=Depends(get_vector_store)):
+@limiter.limit(sources_rate_limit)
+def delete_source(source_id: str, request: Request, vector_store=Depends(get_vector_store)):
     """Remove all chunks for a source from the index."""
     deleted = vector_store.delete_source(source_id)
     if deleted == 0:

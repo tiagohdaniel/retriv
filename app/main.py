@@ -1,23 +1,41 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.schemas.models import HealthResponse
 from app.dependencies import get_settings
 from app.api import routes_index, routes_ask, routes_sources
+from app.core.rate_limit import limiter
+from app.core.logging_config import configure_logging_from_settings
+from app.middleware.logging_middleware import RequestLoggingMiddleware
 
-app = FastAPI(
-    title="Semantic Docs API",
-    description=(
-        "Domain-agnostic semantic search over your documentation.\n\n"
-        "Index any text content, then ask natural language questions — "
-        "answers are grounded on the retrieved chunks with source references."
-    ),
-    version="1.0.0",
+configure_logging_from_settings()
+
+_settings = get_settings()
+_cors_origins = (
+    ["*"]
+    if _settings.cors_origins.strip() == "*"
+    else [o.strip() for o in _settings.cors_origins.split(",")]
 )
 
+app = FastAPI(
+    title="retriv",
+    description=(
+        "Domain-agnostic RAG API.\n\n"
+        "Index any text content, ask natural language questions — "
+        "answers are grounded on retrieved chunks with source references."
+    ),
+    version=_settings.app_version,
+)
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
