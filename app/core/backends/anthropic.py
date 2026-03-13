@@ -12,9 +12,9 @@ Be concise, accurate, and cite the source document when relevant."""
 class AnthropicClient(LLMClientBase):
     """Anthropic Claude implementation of LLMClientBase."""
 
-    def __init__(self, api_key: str = "", model: str = "claude-sonnet-4-20250514"):
+    def __init__(self, api_key: str = "", model: str = "claude-sonnet-4-20250514", timeout: float = 30.0):
         self.model = model
-        self.client = AsyncAnthropic(api_key=api_key)
+        self.client = AsyncAnthropic(api_key=api_key, timeout=timeout)
 
     async def generate(self, prompt: str, max_tokens: int = 1000) -> dict:
         message = await self.client.messages.create(

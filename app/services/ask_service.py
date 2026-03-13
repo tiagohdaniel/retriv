@@ -1,4 +1,7 @@
 from app.schemas.models import AskRequest, AskResponse, SourceReference
+from app.core.logging_config import get_logger
+
+logger = get_logger("retriv.ask")
 
 
 class AskService:
@@ -21,6 +24,7 @@ class AskService:
 
         # skip LLM call if no relevant context — avoids hallucination and saves tokens
         if not docs:
+            logger.info("ask_no_context", question_len=len(request.question))
             return AskResponse(
                 answer="No relevant documentation found. "
                        "Make sure you have indexed content via POST /index.",
@@ -29,6 +33,13 @@ class AskService:
         prompt = self._build_prompt(request.question, docs)
         result = await self.llm.generate(prompt=prompt)
         sources = self._build_sources(docs)
+
+        logger.info(
+            "ask_completed",
+            docs_retrieved=len(docs),
+            tokens_used=result.get("tokens_used", 0),
+            model=result.get("model", ""),
+        )
 
         return AskResponse(
             answer=result["answer"],
@@ -48,6 +59,7 @@ class AskService:
         )
 
         if not docs:
+            logger.info("ask_stream_no_context", question_len=len(request.question))
             yield {"type": "token", "content": "No relevant documentation found. Make sure you have indexed content via POST /index."}
             return
 
@@ -58,6 +70,11 @@ class AskService:
             if isinstance(chunk, str):
                 yield {"type": "token", "content": chunk}
             else:
+                logger.info(
+                    "ask_stream_completed",
+                    docs_retrieved=len(docs),
+                    tokens_used=chunk.get("tokens_used", 0),
+                )
                 yield {
                     "type": "done",
                     "sources": [s.model_dump() for s in sources],

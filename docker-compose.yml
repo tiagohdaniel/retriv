@@ -20,6 +20,7 @@ services:
       - CHROMA_MODE=server
       - CHROMA_HOST=chromadb
       - CHROMA_PORT=8000
+      - WEB_CONCURRENCY=${WEB_CONCURRENCY:-2}
     depends_on:
       chromadb:
         condition: service_healthy
