@@ -6,8 +6,9 @@ from fastapi.responses import StreamingResponse
 from app.schemas.models import AskRequest, AskResponse
 from app.dependencies import get_embedding_service, get_vector_store, get_llm_client
 from app.services.ask_service import AskService
+from app.core.auth import verify_api_key
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(verify_api_key)])
 
 
 @router.post("/ask", response_model=AskResponse, summary="Query indexed documents")

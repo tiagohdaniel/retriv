@@ -3,8 +3,9 @@ from fastapi import APIRouter, Depends
 from app.schemas.models import IndexRequest, IndexResponse
 from app.dependencies import get_embedding_service, get_vector_store, get_chunker
 from app.services.index_service import IndexService
+from app.core.auth import verify_api_key
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(verify_api_key)])
 
 
 @router.post("/index", response_model=IndexResponse, summary="Index a document")

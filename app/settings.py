@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     chroma_persist_dir: str = "./chroma_data"
     chroma_host: str = "localhost"
     chroma_port: int = 8000
+    api_auth_enabled: bool = False
+    api_key: str = ""
     chroma_collection: str = "documents"
     chunk_size: int = 500
     chunk_overlap: int = 50
