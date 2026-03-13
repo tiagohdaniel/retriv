@@ -20,7 +20,7 @@ from app.dependencies import (
     get_llm_client,
 )
 from app.core.embeddings import HashEmbedding
-from app.core.vector_store import DocsVectorStore
+from app.core.backends.chroma import ChromaVectorStore
 from app.core.chunker import TextChunker
 
 
@@ -39,7 +39,7 @@ def client():
     collection_name = f"test_{uuid.uuid4().hex}"
     ephemeral = chromadb.EphemeralClient()
     embedding = HashEmbedding()
-    vector_store = DocsVectorStore(chroma_client=ephemeral, collection_name=collection_name)
+    vector_store = ChromaVectorStore(chroma_client=ephemeral, collection_name=collection_name)
     chunker = TextChunker(chunk_size=200, chunk_overlap=20)
     llm = _mock_llm()
 
