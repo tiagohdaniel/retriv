@@ -50,6 +50,8 @@ class SourceItem(BaseModel):
 class SourcesResponse(BaseModel):
     sources: list[SourceItem]
     total: int
+    page: int
+    page_size: int
 
 
 class HealthResponse(BaseModel):
