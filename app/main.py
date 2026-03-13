@@ -1,3 +1,4 @@
+import os
 import traceback
 
 import structlog
@@ -65,7 +66,16 @@ app.include_router(routes_ask.router, tags=["search"])
 app.include_router(routes_sources.router, tags=["sources"])
 
 if _settings.metrics_enabled:
-    Instrumentator().instrument(app).expose(app, include_in_schema=False, tags=["system"])
+    _instr = Instrumentator().instrument(app)
+    if os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+        from prometheus_client import CollectorRegistry, make_asgi_app
+        from prometheus_client import multiprocess as _prom_multiprocess
+
+        _registry = CollectorRegistry()
+        _prom_multiprocess.MultiProcessCollector(_registry)
+        app.mount("/metrics", make_asgi_app(registry=_registry))
+    else:
+        _instr.expose(app, include_in_schema=False, tags=["system"])
 
 
 @app.get("/health", response_model=HealthResponse, tags=["system"])

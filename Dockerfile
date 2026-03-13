@@ -22,12 +22,16 @@ print('Embedding model cached.')"
 
 COPY . .
 
+ENV PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus_multiproc
+RUN mkdir -p /tmp/prometheus_multiproc
+
 EXPOSE 8001
 
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
     CMD curl -f http://localhost:8001/health || exit 1
 
 CMD gunicorn app.main:app \
+    --config gunicorn.conf.py \
     --workers ${WEB_CONCURRENCY:-2} \
     --worker-class uvicorn.workers.UvicornWorker \
     --bind 0.0.0.0:8001 \
