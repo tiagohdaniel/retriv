@@ -65,26 +65,34 @@ app/
 │   └── routes_sources.py
 ├── core/
 │   ├── vector_store.py         # VectorStoreBase (contract)
-│   ├── llm_client.py           # LLMClientBase (contract) — feature/llm-abstraction
+│   ├── llm_client.py           # LLMClientBase (contract)
+│   ├── chunker.py              # TextChunker
+│   ├── embeddings.py           # embedding fallback chain (ONNX → SentenceTransformer → Hash)
+│   ├── auth.py                 # API key verification dependency
+│   ├── rate_limit.py           # SlowAPI limiter + per-endpoint limit callables
+│   ├── logging_config.py       # structlog configuration (JSON | console)
+│   ├── metrics.py              # Prometheus custom counters
 │   ├── agent/
-│   │   ├── base.py             # AgentBase, ToolBase (contracts) — feature/agent-foundation
-│   │   └── orchestrator.py     # generic agentic loop — feature/agent-foundation
+│   │   ├── base.py             # AgentBase, ToolBase (contracts)
+│   │   └── orchestrator.py     # generic agentic loop
 │   └── backends/               # all swappable implementations
-│       ├── chroma.py           # done
-│       ├── anthropic.py        # feature/llm-abstraction
+│       ├── chroma.py           # ChromaVectorStore — done
+│       ├── anthropic.py        # AnthropicClient — done
 │       └── openai.py           # future
 ├── agents/                     # platform-specific agent implementations
 │   ├── magento/                # future — feature/magento-agent
 │   │   └── tools.py
 │   └── bigcommerce/            # future
 │       └── tools.py
+├── middleware/
+│   └── logging_middleware.py   # RequestLoggingMiddleware — request ID + timing
 ├── services/
 │   ├── ask_service.py          # RAG pure — stable, never changes
 │   ├── index_service.py        # indexing — stable, never changes
-│   └── agent_service.py        # agentic orchestration — feature/agent-foundation
+│   └── agent_service.py        # agentic orchestration
 ├── schemas/
 │   └── models.py               # public API contract — additive only
-├── dependencies.py             # wires everything together
+├── dependencies.py             # wires everything together — LLM_BACKEND routing lives here
 └── settings.py                 # all config via env vars
 ```
 
@@ -125,8 +133,11 @@ Every future capability must follow this pattern: **add, don't rewrite**.
 4. No core logic changes — only schemas + adapters
 
 ### Swapping the embedding model
-1. `EMBEDDING_MODEL` is already an env var
-2. Change the env var → different model, same interface, zero code
+⚠️  **Breaking change for existing data.** Embeddings from different models are incompatible.
+Swapping the model requires reindexing all existing sources from scratch.
+1. Change `EMBEDDING_MODEL` env var
+2. Reindex all sources via `POST /index`
+3. Old ChromaDB collection can be deleted after reindexing
 
 ---
 
@@ -136,16 +147,18 @@ These files are closed for modification:
 
 | File | Why it's stable |
 |------|----------------|
-| `app/services/ask_service.py` | Pure RAG pipeline |
-| `app/services/index_service.py` | Pure indexing pipeline |
-| `app/schemas/models.py` | Public API contract — additive only |
 | `app/core/vector_store.py` | VectorStoreBase interface |
-| `app/core/llm_client.py` | LLMClientBase interface (once created) |
-| `app/core/agent/base.py` | AgentBase, ToolBase interfaces (once created) |
-| `app/core/agent/orchestrator.py` | Generic agentic loop (once created) |
+| `app/core/llm_client.py` | LLMClientBase interface |
+| `app/core/agent/base.py` | AgentBase, ToolBase interfaces |
+| `app/core/agent/orchestrator.py` | Generic agentic loop |
+| `app/schemas/models.py` | Public API contract — additive only |
 
-If you feel the urge to modify a service or a contract file to accommodate a new
-infrastructure choice, stop — the right answer is a new adapter or a new agent folder.
+Services (`ask_service.py`, `index_service.py`) contain only business logic.
+Cross-cutting concerns (logging, metrics) are injected via module-level imports,
+not structural changes to the pipeline.
+
+If you feel the urge to modify a contract file to accommodate a new infrastructure
+choice, stop — the right answer is a new adapter or a new agent folder.
 
 ---
 
@@ -194,14 +207,26 @@ chore: add CHROMA_HOST to .env.example
 |----------|---------|---------|
 | `ANTHROPIC_API_KEY` | — | Required |
 | `MODEL_NAME` | `claude-sonnet-4-20250514` | LLM model |
-| `LLM_BACKEND` | `anthropic` | LLM provider — feature/llm-abstraction |
-| `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Embedding model |
+| `LLM_BACKEND` | `anthropic` | LLM provider — routing in `dependencies.get_llm_client()` |
+| `LLM_TIMEOUT` | `30.0` | LLM request timeout in seconds |
+| `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Embedding model (⚠️ changing requires reindex) |
 | `CHROMA_MODE` | `embedded` | `embedded` (local) or `server` (production) |
 | `CHROMA_PERSIST_DIR` | `./chroma_data` | Path for embedded mode |
 | `CHROMA_HOST` | `localhost` | ChromaDB server host |
 | `CHROMA_PORT` | `8000` | ChromaDB server port |
 | `CHUNK_SIZE` | `500` | Characters per chunk |
 | `CHUNK_OVERLAP` | `50` | Overlap between chunks |
+| `API_AUTH_ENABLED` | `false` | Enable X-API-Key authentication |
+| `API_KEY` | — | API key value (required when auth enabled) |
+| `RATE_LIMIT_ENABLED` | `false` | Enable per-endpoint rate limiting |
+| `RATE_LIMIT_INDEX` | `10/minute` | Rate limit for POST /index |
+| `RATE_LIMIT_ASK` | `30/minute` | Rate limit for POST /ask and POST /ask/stream |
+| `RATE_LIMIT_SOURCES` | `60/minute` | Rate limit for GET /sources and DELETE /sources/{id} |
+| `LOG_LEVEL` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
+| `LOG_FORMAT` | `json` | `json` for production, `console` for local dev |
+| `CORS_ORIGINS` | `*` | Comma-separated allowed origins, or `*` |
+| `WEB_CONCURRENCY` | `2` | Number of Gunicorn worker processes |
+| `METRICS_ENABLED` | `true` | Expose GET /metrics in Prometheus format |
 
 Local dev: copy `.env.example` to `.env`, fill `ANTHROPIC_API_KEY`, run `python run.py`.
 Production: `docker-compose up` — API + ChromaDB server start together.
@@ -210,22 +235,34 @@ Production: `docker-compose up` — API + ChromaDB server start together.
 
 ## Production Readiness Checklist
 
-Features implemented:
+### Implemented
 - [x] RAG pipeline (embed → search → prompt → generate)
-- [x] Streaming responses (SSE)
+- [x] Streaming responses (SSE) — POST /ask/stream
 - [x] Vector store abstraction (VectorStoreBase + ChromaVectorStore)
-- [x] Magento module with chat + document management
-- [x] ACL (role-based access in Magento Admin)
-- [x] Configurable API URL per environment
+- [x] LLM abstraction (LLMClientBase + AnthropicClient)
+- [x] Agent foundation (ToolBase, RagTool, AgentOrchestrator)
+- [x] API authentication (X-API-Key header, disabled by default)
+- [x] Rate limiting (SlowAPI, per endpoint, per API key or IP)
+- [x] Structured logging (structlog, JSON output, request ID correlation)
+- [x] Prometheus metrics (HTTP + custom RAG counters)
+- [x] Docker Compose production setup (ChromaDB server mode)
+- [x] Gunicorn multi-worker (WEB_CONCURRENCY env var)
+- [x] LLM timeout (LLM_TIMEOUT env var)
+- [x] CORS configurable (CORS_ORIGINS env var)
+- [x] Input size validation (max_length on content, question, source_id)
+- [x] Magento module (chat interface + document management + ACL)
 
-Features pending (in order of priority):
-- [ ] API authentication (API key header) — `feature/api-authentication`
-- [ ] LLMClientBase abstraction — `feature/llm-abstraction`
-- [ ] Agent foundation (AgentBase, ToolBase, orchestrator) — `feature/agent-foundation`
-- [ ] Docker Compose production setup (ChromaDB server mode) — `feature/production-docker`
-- [ ] Structured logging — `feature/observability`
-- [ ] Tenant isolation — `feature/multi-tenant`
-- [ ] Magento agent (Tool Use for orders, catalog, cart) — `feature/magento-agent`
+### Pending (in order of priority)
+- [ ] Embedding model upgrade (nomic-embed-text-v1.5) — do before indexing real data
+- [ ] LLM_BACKEND routing in dependencies.py — currently hardcoded to Anthropic
+- [ ] Global exception handler — unhandled errors leak stack traces
+- [ ] Health check with dependency verification — /health should check ChromaDB
+- [ ] Prometheus multiprocess mode — metrics broken with multiple Gunicorn workers
+- [ ] Docker non-root user — container runs as root by default
+- [ ] CI/CD pipeline — automated tests on every PR (GitHub Actions)
+- [ ] Sources pagination — list_sources() loads all into memory
+- [ ] Reranking — cross-encoder after initial retrieval (quality)
+- [ ] Hybrid search — BM25 + vector combined (quality)
 
 ---
 
@@ -234,7 +271,7 @@ Features pending (in order of priority):
 - Not an agent — does not take actions (cancel orders, send emails)
 - Not connected to live store data (orders, inventory, customers)
 - Not multi-tenant — single collection, single client per deployment
-- Not multi-LLM — Anthropic only
+- Not multi-LLM — Anthropic only until `fix/llm-backend-routing` is implemented
 - `feature/agent-foundation` creates the structure, not the agent itself
 
 These are Phase 2+ items. Do not design for them prematurely.
