@@ -1,4 +1,5 @@
 import json
+import re
 
 import structlog
 from anthropic import AsyncAnthropic
@@ -104,11 +105,18 @@ class LangfuseObservability(ObservabilityBase):
         try:
             message = await self._anthropic.messages.create(
                 model=self._eval_model,
-                max_tokens=128,
+                max_tokens=256,
                 temperature=0,
                 messages=[{"role": "user", "content": prompt}],
             )
-            data = json.loads(message.content[0].text)
+            text = message.content[0].text.strip() if message.content else ""
+            logger.debug("eval_raw_response", text=text, stop_reason=message.stop_reason)
+
+            # Extract JSON from response — handles leading/trailing text from the model
+            match = re.search(r'\{.*?\}', text, re.DOTALL)
+            if not match:
+                raise ValueError(f"No JSON found in response: {text!r}")
+            data = json.loads(match.group())
             return max(0.0, min(1.0, float(data["score"])))
         except Exception as exc:
             logger.warning("eval_score_failed", error=str(exc))
