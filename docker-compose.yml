@@ -1,11 +1,11 @@
 services:
   chromadb:
-    image: chromadb/chroma:latest
+    image: chromadb/chroma:0.6.3
     volumes:
       - chroma_data:/chroma/chroma
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      test: ["CMD", "httpx", "http://localhost:8000/api/v1/heartbeat"]
       interval: 30s
       timeout: 10s
       retries: 3
