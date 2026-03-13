@@ -5,7 +5,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     model_name: str = "claude-sonnet-4-20250514"
     embedding_model: str = "all-MiniLM-L6-v2"
+    chroma_mode: str = "embedded"   # embedded | server
     chroma_persist_dir: str = "./chroma_data"
+    chroma_host: str = "localhost"
+    chroma_port: int = 8000
     chroma_collection: str = "documents"
     chunk_size: int = 500
     chunk_overlap: int = 50
