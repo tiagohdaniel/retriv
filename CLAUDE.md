@@ -165,6 +165,26 @@ app/
 
 ---
 
+## O que NÃO pertence ao retriv
+
+**Tools de domínio específico nunca entram aqui.**
+
+O retriv é o core genérico — RAG puro. Quando um cliente precisar de agents com ações específicas (abrir sinistro, rastrear pedido, protocolar documento), isso vai em um repositório separado `<cliente>-agent` que importa o retriv como dependência.
+
+```
+# ERRADO — nunca fazer isso:
+app/agents/guerreiro/tools/abrir_sinistro.py  ← lógica de negócio do cliente aqui
+
+# CERTO:
+repositório separado: guerreiro-agent/
+    requirements.txt → retriv @ git+https://...
+    tools/abrir_sinistro.py
+```
+
+O que **pode** ficar no retriv: contratos genéricos (`AgentBase`, `ToolBase`, `AgentOrchestrator`) — são só interfaces, sem lógica de domínio.
+
+---
+
 ## Como Adicionar
 
 ### Novo tenant/cliente
