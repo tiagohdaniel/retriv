@@ -12,11 +12,14 @@ class Settings(BaseSettings):
     embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
 
     # Vector store
-    chroma_mode: str = "embedded"   # embedded | server
+    chroma_mode: str = "embedded"   # embedded | server | cloud
     chroma_persist_dir: str = "./chroma_data"
     chroma_host: str = "localhost"
     chroma_port: int = 8000
     chroma_collection: str = "documents"
+    chroma_cloud_api_key: str = ""
+    chroma_cloud_tenant: str = ""
+    chroma_cloud_database: str = ""
 
     # Chunking
     chunk_size: int = 500

@@ -24,6 +24,12 @@ def get_chroma_client() -> chromadb.ClientAPI:
     settings = get_settings()
     if settings.chroma_mode == "server":
         return chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
+    if settings.chroma_mode == "cloud":
+        return chromadb.CloudClient(
+            api_key=settings.chroma_cloud_api_key,
+            tenant=settings.chroma_cloud_tenant,
+            database=settings.chroma_cloud_database,
+        )
     return chromadb.PersistentClient(path=str(settings.chroma_persist_dir))
 
 
