@@ -1,278 +1,263 @@
-# retriv — Project Context for Claude Code
+# retriv — Project Context
 
-## What This Is
+## O que é
 
-retriv is a domain-agnostic AI assistant that answers questions grounded in indexed documents.
-It is built as a product — not a script, not a POC — designed to be installed in any
-client environment and operated without developer intervention for day-to-day use.
+retriv é uma API RAG (Retrieval-Augmented Generation) domain-agnóstica.
+Recebe documentos via `POST /index`, armazena como vetores no ChromaDB, e responde perguntas em linguagem natural via `POST /ask` (síncrono) ou `POST /ask/stream` (SSE).
 
-The RAG pipeline is the foundation. It is platform-agnostic and domain-agnostic —
-the same core serves any industry (retail, legal, healthcare, finance) and any platform
-(Magento, BigCommerce, Oracle Commerce) without modification.
-
-Current integration: Magento Admin (chat interface + document management module).
-Architecture: decoupled Python API (FastAPI) + Magento PHP module communicating via HTTP.
-
-First target client: FedEx (via McFadyen Digital).
+É um produto — não um script. Projetado para ser instalado em qualquer ambiente de cliente sem modificação no core.
 
 ---
 
-## Architecture Philosophy
-
-The single most important rule: **the core never knows about infrastructure or platform.**
-
-This project follows Hexagonal Architecture (Ports & Adapters):
+## Arquitetura
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                        CONTRACTS (ports)                     │
-│   VectorStoreBase · LLMClientBase · ToolBase · AgentBase    │
-│   — define what exists, never change —                       │
-└────────┬───────────────────┬──────────────────┬─────────────┘
-         │                   │                  │
-┌────────▼────────┐ ┌────────▼────────┐ ┌───────▼──────────────┐
-│    BACKENDS     │ │     TOOLS       │ │      AGENTS          │
-│  chroma.py      │ │  rag_tool.py    │ │  magento/ (future)   │
-│  pinecone.py    │ │  order_tool.py  │ │  bigcommerce/        │
-│  anthropic.py   │ │  catalog_tool.py│ │  oracle/             │
-│  openai.py      │ │  ...            │ │  ...                 │
-└─────────────────┘ └─────────────────┘ └──────────────────────┘
-         │                   │                  │
-┌────────▼───────────────────▼──────────────────▼─────────────┐
-│                        SERVICES                              │
-│  AskService    — RAG pure pipeline, never changes            │
-│  IndexService  — chunk/embed/store, never changes            │
-│  AgentService  — generic orchestrator, uses tools + LLM     │
-└──────────────────────────────────────────────────────────────┘
+Cliente (dashboard, Magento, qualquer HTTP)
+        │
+        │  X-API-Key → tenant_id
+        ▼
+┌─────────────────────────────────────────┐
+│           FastAPI (routes_*.py)         │
+│   /index  /ask  /ask/stream  /sources   │
+└────────────────┬────────────────────────┘
+                 │
+        ┌────────▼────────┐
+        │   Services      │
+        │  IndexService   │  chunk → embed → store
+        │  AskService     │  embed → search → prompt → LLM → trace
+        └────────┬────────┘
+                 │
+     ┌───────────┼───────────┐
+     ▼           ▼           ▼
+ChromaDB    Anthropic    Langfuse
+(vetores)   (LLM+eval)  (observability)
 ```
 
-**Adding a new platform agent (Magento, BigCommerce):** new folder in `app/agents/`.
-**Adding a new vector DB:** new file in `app/core/backends/`.
-**Adding a new LLM provider:** new file in `app/core/backends/`.
-**Adding a new domain (legal, healthcare):** index different documents. Zero code.
-
-Core services are never touched.
+**Regra principal: o core nunca conhece infraestrutura.**
+Toda dependência de infra é injetada via `dependencies.py`. Nunca modifique `ask_service.py` ou `index_service.py` para acomodar infra — crie um novo adapter em `app/core/backends/`.
 
 ---
 
-## Target Folder Structure
+## Multi-tenancy
+
+Um único deployment do retriv serve múltiplos clientes com isolamento total.
+
+**Como funciona:**
+- Cada cliente tem uma API key única
+- A key é mapeada para um `tenant_id` via env var `API_KEYS`
+- Todos os chunks indexados carregam `tenant_id` nos metadados do ChromaDB
+- Todas as buscas filtram por `tenant_id` automaticamente
+
+**Configuração:**
+```env
+API_AUTH_ENABLED=true
+API_KEYS=abc123:guerreiro,xyz789:porto,def456:outro-cliente
+```
+
+**Fluxo:**
+```
+X-API-Key: abc123
+    → verify_api_key() → tenant_id = "guerreiro"
+    → IndexService.index(request, tenant_id="guerreiro")
+    → chunk IDs: "guerreiro__apolice-vida__chunk_0"
+    → metadata: { tenant_id: "guerreiro", source_id: "apolice-vida" }
+
+X-API-Key: xyz789
+    → tenant_id = "porto"
+    → busca filtrada: WHERE tenant_id = "porto"
+    → nunca vê dados do tenant "guerreiro"
+```
+
+**Modo single-tenant (compatibilidade):**
+- `API_AUTH_ENABLED=false` → `tenant_id=None` → sem filtragem
+- `API_KEY=chave` único → `tenant_id="default"`
+
+---
+
+## Observabilidade (Langfuse)
+
+Avalia qualidade do RAG automaticamente após cada query (streaming e síncrono).
+
+**Métricas geradas:**
+- `faithfulness` (0-1): a resposta se baseia apenas no contexto?
+- `answer_relevancy` (0-1): a resposta endereça a pergunta?
+
+**Como funciona:**
+- Modelo leve (`EVAL_MODEL`, default: `claude-haiku`) julga a resposta
+- Trace enviado ao Langfuse via `langfuse.flush()` antes do coroutine terminar
+- Desabilitado por padrão (`EVAL_ENABLED=false`)
+
+---
+
+## Variáveis de Ambiente
+
+| Variável | Default | Descrição |
+|----------|---------|-----------|
+| `ANTHROPIC_API_KEY` | — | Obrigatório |
+| `MODEL_NAME` | `claude-sonnet-4-20250514` | Modelo LLM principal |
+| `LLM_BACKEND` | `anthropic` | Provider LLM |
+| `LLM_TIMEOUT` | `30.0` | Timeout requests LLM (segundos) |
+| `EMBEDDING_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | ⚠️ Trocar exige reindexação total |
+| `CHROMA_MODE` | `embedded` | `embedded` / `server` / `cloud` |
+| `CHROMA_PERSIST_DIR` | `./chroma_data` | Path para modo embedded |
+| `CHROMA_HOST` | `localhost` | Host ChromaDB (modo server) |
+| `CHROMA_PORT` | `8000` | Porta ChromaDB (modo server) |
+| `CHROMA_CLOUD_API_KEY` | — | Chroma Cloud |
+| `CHROMA_CLOUD_TENANT` | — | Chroma Cloud |
+| `CHROMA_CLOUD_DATABASE` | — | Chroma Cloud |
+| `CHROMA_COLLECTION` | `documents` | Nome da coleção |
+| `CHUNK_SIZE` | `500` | Caracteres por chunk |
+| `CHUNK_OVERLAP` | `50` | Sobreposição entre chunks |
+| `API_AUTH_ENABLED` | `false` | Habilita autenticação por API key |
+| `API_KEY` | — | Chave única (single-tenant) |
+| `API_KEYS` | — | Mapa `key:tenant_id,key:tenant_id` (multi-tenant) |
+| `RATE_LIMIT_ENABLED` | `false` | Habilita rate limiting |
+| `RATE_LIMIT_INDEX` | `10/minute` | Limite POST /index |
+| `RATE_LIMIT_ASK` | `30/minute` | Limite POST /ask e /ask/stream |
+| `RATE_LIMIT_SOURCES` | `60/minute` | Limite GET/DELETE /sources |
+| `LOG_LEVEL` | `INFO` | Nível de log |
+| `LOG_FORMAT` | `json` | `json` (prod) / `console` (dev) |
+| `CORS_ORIGINS` | `*` | Origins permitidas |
+| `WEB_CONCURRENCY` | `2` | Workers Gunicorn |
+| `METRICS_ENABLED` | `true` | Expõe GET /metrics (Prometheus) |
+| `METRICS_USERNAME` | — | Basic auth para /metrics |
+| `METRICS_PASSWORD` | — | Basic auth para /metrics |
+| `EVAL_ENABLED` | `false` | Habilita avaliação RAG via Langfuse |
+| `EVAL_MODEL` | `claude-haiku-4-5-20251001` | Modelo leve para LLM-as-judge |
+| `LANGFUSE_PUBLIC_KEY` | — | Langfuse public key |
+| `LANGFUSE_SECRET_KEY` | — | Langfuse secret key |
+| `LANGFUSE_HOST` | `https://cloud.langfuse.com` | US: `https://us.cloud.langfuse.com` |
+
+---
+
+## Estrutura de Arquivos
 
 ```
 app/
-├── api/                        # routes — HTTP layer only
-│   ├── routes_ask.py
-│   ├── routes_index.py
-│   └── routes_sources.py
+├── api/
+│   ├── routes_ask.py           # POST /ask, POST /ask/stream
+│   ├── routes_index.py         # POST /index
+│   └── routes_sources.py       # GET /sources, DELETE /sources/{id}
 ├── core/
-│   ├── vector_store.py         # VectorStoreBase (contract)
-│   ├── llm_client.py           # LLMClientBase (contract)
+│   ├── auth.py                 # verify_api_key → retorna tenant_id | None
+│   ├── vector_store.py         # VectorStoreBase (contrato — não modificar)
+│   ├── llm_client.py           # LLMClientBase (contrato — não modificar)
+│   ├── observability.py        # ObservabilityBase (contrato — não modificar)
 │   ├── chunker.py              # TextChunker
-│   ├── embeddings.py           # embedding fallback chain (ONNX → SentenceTransformer → Hash)
-│   ├── auth.py                 # API key verification dependency
-│   ├── rate_limit.py           # SlowAPI limiter + per-endpoint limit callables
-│   ├── logging_config.py       # structlog configuration (JSON | console)
-│   ├── metrics.py              # Prometheus custom counters
-│   ├── agent/
-│   │   ├── base.py             # AgentBase, ToolBase (contracts)
-│   │   └── orchestrator.py     # generic agentic loop
-│   └── backends/               # all swappable implementations
-│       ├── chroma.py           # ChromaVectorStore — done
-│       ├── anthropic.py        # AnthropicClient — done
-│       └── openai.py           # future
-├── agents/                     # platform-specific agent implementations
-│   ├── magento/                # future — feature/magento-agent
-│   │   └── tools.py
-│   └── bigcommerce/            # future
-│       └── tools.py
-├── middleware/
-│   └── logging_middleware.py   # RequestLoggingMiddleware — request ID + timing
+│   ├── embeddings.py           # create_embedding_service (fastembed/ONNX)
+│   ├── rate_limit.py           # SlowAPI
+│   ├── logging_config.py       # structlog JSON
+│   ├── metrics.py              # Prometheus counters
+│   └── backends/
+│       ├── chroma.py                    # ChromaVectorStore — ativo
+│       ├── anthropic.py                 # AnthropicClient — ativo
+│       ├── langfuse_observability.py    # LangfuseObservability — ativo se EVAL_ENABLED=true
+│       └── null_observability.py        # NullObservability — fallback (no-op)
 ├── services/
-│   ├── ask_service.py          # RAG pure — stable, never changes
-│   ├── index_service.py        # indexing — stable, never changes
-│   └── agent_service.py        # agentic orchestration
+│   ├── ask_service.py          # RAG: embed → search → prompt → LLM → trace
+│   └── index_service.py        # chunk → embed → upsert no vector store
 ├── schemas/
-│   └── models.py               # public API contract — additive only
-├── dependencies.py             # wires everything together — LLM_BACKEND routing lives here
-└── settings.py                 # all config via env vars
+│   └── models.py               # Contratos públicos da API (Pydantic) — apenas additive
+├── dependencies.py             # Wiring: instancia e injeta todos os serviços via FastAPI Depends
+├── settings.py                 # Todas as configs via env vars (pydantic-settings)
+└── main.py                     # App FastAPI + middlewares + routers
 ```
 
 ---
 
-## Incremental Evolution Rules
+## O que NÃO pertence ao retriv
 
-Every future capability must follow this pattern: **add, don't rewrite**.
+**Tools de domínio específico nunca entram aqui.**
 
-### Adding a new vector DB backend
-1. Create `app/core/backends/<name>.py`
-2. Implement `VectorStoreBase`
-3. Add `elif settings.vector_backend == "<name>"` in `dependencies.py`
-4. Core, services, routes: untouched
+O retriv é o core genérico — RAG puro. Quando um cliente precisar de agents com ações específicas (abrir sinistro, rastrear pedido, protocolar documento), isso vai em um repositório separado `<cliente>-agent` que importa o retriv como dependência.
 
-### Adding a new LLM provider
-1. Create `app/core/backends/<provider>.py`
-2. Implement `LLMClientBase`
-3. Add `elif settings.llm_backend == "<provider>"` in `dependencies.py`
-4. Core, services, routes: untouched
+```
+# ERRADO — nunca fazer isso:
+app/agents/guerreiro/tools/abrir_sinistro.py  ← lógica de negócio do cliente aqui
 
-### Adding a platform-specific agent
-1. Create `app/agents/<platform>/tools.py`
-2. Implement each tool extending `ToolBase`
-3. Register tools in `dependencies.py`
-4. `AgentService` orchestrator: untouched
-5. `AskService`, `IndexService`: untouched
+# CERTO:
+repositório separado: guerreiro-agent/
+    requirements.txt → retriv @ git+https://...
+    tools/abrir_sinistro.py
+```
 
-### Adding a new domain (legal, healthcare, HR)
-1. Index documents from that domain — zero code changes
-2. The RAG pipeline handles any domain natively
-3. If the domain needs custom tools (e.g. query a specific API): new tool in `app/agents/`
-
-### Adding tenant isolation
-1. Add `tenant_id: str = "default"` to `IndexRequest` and `AskRequest` schemas
-2. Pass `tenant_id` to `upsert_chunks` and `search` as metadata filter
-3. Each adapter filters by `tenant_id` in its own way
-4. No core logic changes — only schemas + adapters
-
-### Swapping the embedding model
-⚠️  **Breaking change for existing data.** Embeddings from different models are incompatible.
-Swapping the model requires reindexing all existing sources from scratch.
-1. Change `EMBEDDING_MODEL` env var
-2. Reindex all sources via `POST /index`
-3. Old ChromaDB collection can be deleted after reindexing
+O que **pode** ficar no retriv: contratos genéricos (`AgentBase`, `ToolBase`, `AgentOrchestrator`) — são só interfaces, sem lógica de domínio.
 
 ---
 
-## What Never Changes (The Core Contract)
+## Como Adicionar
 
-These files are closed for modification:
+### Novo tenant/cliente
+1. Gerar uma API key
+2. Adicionar `nova_key:tenant_id` em `API_KEYS` no `.env`
+3. Zero código
 
-| File | Why it's stable |
-|------|----------------|
-| `app/core/vector_store.py` | VectorStoreBase interface |
-| `app/core/llm_client.py` | LLMClientBase interface |
-| `app/core/agent/base.py` | AgentBase, ToolBase interfaces |
-| `app/core/agent/orchestrator.py` | Generic agentic loop |
-| `app/schemas/models.py` | Public API contract — additive only |
+### Novo vector store
+1. `app/core/backends/<nome>.py` implementando `VectorStoreBase`
+2. `elif` em `dependencies.get_vector_store()`
+3. Core e services: intocados
 
-Services (`ask_service.py`, `index_service.py`) contain only business logic.
-Cross-cutting concerns (logging, metrics) are injected via module-level imports,
-not structural changes to the pipeline.
+### Novo LLM provider
+1. `app/core/backends/<provider>.py` implementando `LLMClientBase`
+2. `elif settings.llm_backend == "<provider>"` em `dependencies.get_llm_client()`
 
-If you feel the urge to modify a contract file to accommodate a new infrastructure
-choice, stop — the right answer is a new adapter or a new agent folder.
+### Novo domínio (jurídico, saúde, RH)
+1. Indexar documentos do domínio via `POST /index`
+2. Zero código — o pipeline é domain-agnostic
 
 ---
 
 ## Gitflow
 
 ```
-main        → production only — receives merges from develop or hotfix/*
-develop     → integration — all features land here first
-feature/*   → one feature per branch, branched from develop
-hotfix/*    → urgent production fix, branched from main, merged to main + develop
+main      → produção — só recebe merge de develop ou hotfix/*
+develop   → integração — todas as features chegam aqui primeiro
+feat/*    → nova feature, saindo de develop
+fix/*     → correção de bug, saindo de develop
+hotfix/*  → correção urgente em prod, sai de main, mergeia em main + develop
 ```
 
-Rules:
-- Never commit directly to `main` or `develop`
-- Every feature goes through a PR
-- Tags on `main` follow semver: `v1.0.0`, `v1.1.0`, `v2.0.0`
-- Hotfixes get a patch bump: `v1.0.1`
+**Regras:**
+- Nunca commitar direto em `main` ou `develop`
+- Todo código passa por PR
+- Tags em `main` seguem semver: `v1.0.0`, `v1.1.0`
 
 ---
 
-## Commit Style
+## Padrão de Commits
 
 ```
-type: short description in imperative mood
-
-Optional body explaining WHY, not what.
+tipo: descrição curta no imperativo
 ```
 
-Types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`
+Tipos: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`
 
-Examples:
-```
-feat: add tenant_id filtering to vector store interface
-refactor: extract LLMClientBase to enable provider swapping
-fix: handle empty collection on ChromaDB count()
-chore: add CHROMA_HOST to .env.example
-```
-
-**No co-authorship lines. No "Generated with Claude". Commits are authored by the developer only.**
+**Sem linhas de co-autoria. Sem referências a Claude/AI.**
 
 ---
 
-## Environment Variables
+## Deploy
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `ANTHROPIC_API_KEY` | — | Required |
-| `MODEL_NAME` | `claude-sonnet-4-20250514` | LLM model |
-| `LLM_BACKEND` | `anthropic` | LLM provider — routing in `dependencies.get_llm_client()` |
-| `LLM_TIMEOUT` | `30.0` | LLM request timeout in seconds |
-| `EMBEDDING_MODEL` | `all-MiniLM-L6-v2` | Embedding model (⚠️ changing requires reindex) |
-| `CHROMA_MODE` | `embedded` | `embedded` (local) or `server` (production) |
-| `CHROMA_PERSIST_DIR` | `./chroma_data` | Path for embedded mode |
-| `CHROMA_HOST` | `localhost` | ChromaDB server host |
-| `CHROMA_PORT` | `8000` | ChromaDB server port |
-| `CHUNK_SIZE` | `500` | Characters per chunk |
-| `CHUNK_OVERLAP` | `50` | Overlap between chunks |
-| `API_AUTH_ENABLED` | `false` | Enable X-API-Key authentication |
-| `API_KEY` | — | API key value (required when auth enabled) |
-| `RATE_LIMIT_ENABLED` | `false` | Enable per-endpoint rate limiting |
-| `RATE_LIMIT_INDEX` | `10/minute` | Rate limit for POST /index |
-| `RATE_LIMIT_ASK` | `30/minute` | Rate limit for POST /ask and POST /ask/stream |
-| `RATE_LIMIT_SOURCES` | `60/minute` | Rate limit for GET /sources and DELETE /sources/{id} |
-| `LOG_LEVEL` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
-| `LOG_FORMAT` | `json` | `json` for production, `console` for local dev |
-| `CORS_ORIGINS` | `*` | Comma-separated allowed origins, or `*` |
-| `WEB_CONCURRENCY` | `2` | Number of Gunicorn worker processes |
-| `METRICS_ENABLED` | `true` | Expose GET /metrics in Prometheus format |
+**Produção atual:**
+- retriv API → Railway (Docker), região US East, porta 8001
+- ChromaDB → Chroma Cloud (CHROMA_MODE=cloud)
 
-Local dev: copy `.env.example` to `.env`, fill `ANTHROPIC_API_KEY`, run `python run.py`.
-Production: `docker-compose up` — API + ChromaDB server start together.
+**Local/staging:**
+```bash
+docker compose up --build -d
+```
+Sobe: `retriv-api` (porta 8001) + `chromadb` (porta 8000).
+
+**Healthcheck ChromaDB:** usa `grep -q ':1F40 ' /proc/net/tcp` — a imagem `chromadb/chroma:1.0.0` não tem `curl` nem `httpx`.
 
 ---
 
-## Production Readiness Checklist
+## System Prompt
 
-### Implemented
-- [x] RAG pipeline (embed → search → prompt → generate)
-- [x] Streaming responses (SSE) — POST /ask/stream
-- [x] Vector store abstraction (VectorStoreBase + ChromaVectorStore)
-- [x] LLM abstraction (LLMClientBase + AnthropicClient)
-- [x] Agent foundation (ToolBase, RagTool, AgentOrchestrator)
-- [x] API authentication (X-API-Key header, disabled by default)
-- [x] Rate limiting (SlowAPI, per endpoint, per API key or IP)
-- [x] Structured logging (structlog, JSON output, request ID correlation)
-- [x] Prometheus metrics (HTTP + custom RAG counters)
-- [x] Docker Compose production setup (ChromaDB server mode)
-- [x] Gunicorn multi-worker (WEB_CONCURRENCY env var)
-- [x] LLM timeout (LLM_TIMEOUT env var)
-- [x] CORS configurable (CORS_ORIGINS env var)
-- [x] Input size validation (max_length on content, question, source_id)
-- [x] Magento module (chat interface + document management + ACL)
+O LLM é restrito ao conteúdo indexado:
+1. Responde apenas com informação dos documentos
+2. Sem contexto suficiente: _"Não encontrei informações sobre isso na base de conhecimento."_
+3. Fora do escopo: _"Só consigo responder perguntas relacionadas aos documentos indexados."_
+4. Responde no mesmo idioma da pergunta
 
-### Pending (in order of priority)
-- [ ] Embedding model upgrade (nomic-embed-text-v1.5) — do before indexing real data
-- [ ] LLM_BACKEND routing in dependencies.py — currently hardcoded to Anthropic
-- [ ] Global exception handler — unhandled errors leak stack traces
-- [ ] Health check with dependency verification — /health should check ChromaDB
-- [ ] Prometheus multiprocess mode — metrics broken with multiple Gunicorn workers
-- [ ] Docker non-root user — container runs as root by default
-- [ ] CI/CD pipeline — automated tests on every PR (GitHub Actions)
-- [ ] Sources pagination — list_sources() loads all into memory
-- [ ] Reranking — cross-encoder after initial retrieval (quality)
-- [ ] Hybrid search — BM25 + vector combined (quality)
-
----
-
-## What This Is Not (Yet)
-
-- Not an agent — does not take actions (cancel orders, send emails)
-- Not connected to live store data (orders, inventory, customers)
-- Not multi-tenant — single collection, single client per deployment
-- Not multi-LLM — Anthropic only until `fix/llm-backend-routing` is implemented
-- `feature/agent-foundation` creates the structure, not the agent itself
-
-These are Phase 2+ items. Do not design for them prematurely.
-The abstraction layer exists precisely so these can be added without touching the core.
+`max_distance` padrão: `0.45` — chunks com distância coseno acima desse valor são descartados antes de chegar no LLM.
