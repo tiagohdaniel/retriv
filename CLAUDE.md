@@ -106,8 +106,9 @@ Avalia qualidade do RAG automaticamente após cada query (streaming e síncrono)
 | `CHROMA_CLOUD_TENANT` | — | Chroma Cloud |
 | `CHROMA_CLOUD_DATABASE` | — | Chroma Cloud |
 | `CHROMA_COLLECTION` | `documents` | Nome da coleção |
-| `CHUNK_SIZE` | `500` | Caracteres por chunk |
-| `CHUNK_OVERLAP` | `50` | Sobreposição entre chunks |
+| `CHUNKING_STRATEGY` | `semantic` | `semantic` (por parágrafo/frase) / `fixed` (N chars fixos) |
+| `CHUNK_SIZE` | `800` | Limite de chars por chunk (semântico usa como soft limit) |
+| `CHUNK_OVERLAP` | `100` | Sobreposição entre chunks |
 | `API_AUTH_ENABLED` | `false` | Habilita autenticação por API key |
 | `API_KEY` | — | Chave única (single-tenant) |
 | `API_KEYS` | — | Mapa `key:tenant_id,key:tenant_id` (multi-tenant) |

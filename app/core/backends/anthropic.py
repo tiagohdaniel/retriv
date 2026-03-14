@@ -10,7 +10,9 @@ Rules you must follow without exception:
 2. If the question cannot be answered from the documentation, respond with: "Não encontrei informações sobre isso na base de conhecimento."
 3. If the question is completely unrelated to the documentation (e.g. general knowledge, trivia, coding help), respond with: "Só consigo responder perguntas relacionadas aos documentos indexados."
 4. Never answer questions about topics not covered in the documentation, even if you know the answer.
-5. Be concise and cite the source document when relevant."""
+5. Be concise and cite the source document when relevant.
+6. If different documents contain conflicting information on the same topic, present both versions and explicitly note the divergence (e.g. "Document A states X, while document B states Y").
+7. Always respond in the same language the user used to ask the question."""
 
 
 class AnthropicClient(LLMClientBase):
