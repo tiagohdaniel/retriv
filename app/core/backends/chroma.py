@@ -22,20 +22,25 @@ class ChromaVectorStore(VectorStoreBase):
         title: str,
         chunks: list[str],
         embeddings: list[list[float]],
+        tenant_id: str | None = None,
         extra_metadata: dict | None = None,
     ) -> None:
         indexed_at = datetime.now(timezone.utc).isoformat()
-        ids = [f"{source_id}__chunk_{i}" for i in range(len(chunks))]
-        metadatas = [
-            {
+        # Prefix IDs with tenant to avoid collisions across tenants
+        prefix = f"{tenant_id}__{source_id}" if tenant_id else source_id
+        ids = [f"{prefix}__chunk_{i}" for i in range(len(chunks))]
+        metadatas = []
+        for i in range(len(chunks)):
+            meta: dict = {
                 "source_id": source_id,
                 "title": title,
                 "chunk_index": i,
                 "indexed_at": indexed_at,
                 **(extra_metadata or {}),
             }
-            for i in range(len(chunks))
-        ]
+            if tenant_id is not None:
+                meta["tenant_id"] = tenant_id
+            metadatas.append(meta)
         self.collection.upsert(
             ids=ids,
             documents=chunks,
@@ -49,13 +54,14 @@ class ChromaVectorStore(VectorStoreBase):
         top_k: int = 5,
         source_ids: list[str] | None = None,
         max_distance: float = 0.8,
+        tenant_id: str | None = None,
     ) -> list[dict]:
         count = self.collection.count()
         if count == 0:
             return []
 
         n_results = min(top_k, count)
-        where = self._build_where(source_ids)
+        where = self._build_where(source_ids=source_ids, tenant_id=tenant_id)
 
         kwargs: dict = dict(
             query_embeddings=[query_embedding],
@@ -82,21 +88,32 @@ class ChromaVectorStore(VectorStoreBase):
             )
         return docs
 
-    def delete_source(self, source_id: str) -> int:
-        result = self.collection.get(
-            where={"source_id": source_id},
-            include=[],
-        )
+    def delete_source(self, source_id: str, tenant_id: str | None = None) -> int:
+        where: dict
+        if tenant_id is not None:
+            where = {"$and": [{"source_id": source_id}, {"tenant_id": tenant_id}]}
+        else:
+            where = {"source_id": source_id}
+        result = self.collection.get(where=where, include=[])
         ids = result["ids"]
         if ids:
             self.collection.delete(ids=ids)
         return len(ids)
 
-    def list_sources(self, limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
+    def list_sources(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        tenant_id: str | None = None,
+    ) -> tuple[list[dict], int]:
         if self.collection.count() == 0:
             return [], 0
 
-        result = self.collection.get(include=["metadatas"])
+        kwargs: dict = {"include": ["metadatas"]}
+        if tenant_id is not None:
+            kwargs["where"] = {"tenant_id": tenant_id}
+
+        result = self.collection.get(**kwargs)
         sources: dict[str, dict] = {}
 
         for meta in result["metadatas"]:
@@ -118,9 +135,24 @@ class ChromaVectorStore(VectorStoreBase):
     def ping(self) -> None:
         self.collection.count()
 
-    def _build_where(self, source_ids: list[str] | None) -> dict | None:
-        if not source_ids:
+    def _build_where(
+        self,
+        source_ids: list[str] | None,
+        tenant_id: str | None,
+    ) -> dict | None:
+        conditions: list[dict] = []
+
+        if tenant_id is not None:
+            conditions.append({"tenant_id": tenant_id})
+
+        if source_ids:
+            if len(source_ids) == 1:
+                conditions.append({"source_id": source_ids[0]})
+            else:
+                conditions.append({"$or": [{"source_id": sid} for sid in source_ids]})
+
+        if not conditions:
             return None
-        if len(source_ids) == 1:
-            return {"source_id": source_ids[0]}
-        return {"$or": [{"source_id": sid} for sid in source_ids]}
+        if len(conditions) == 1:
+            return conditions[0]
+        return {"$and": conditions}

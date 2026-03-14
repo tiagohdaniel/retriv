@@ -9,7 +9,7 @@ from app.services.ask_service import AskService
 from app.core.auth import verify_api_key
 from app.core.rate_limit import limiter, ask_rate_limit
 
-router = APIRouter(dependencies=[Depends(verify_api_key)])
+router = APIRouter()
 
 
 @router.post("/ask", response_model=AskResponse, summary="Query indexed documents")
@@ -18,6 +18,7 @@ async def ask_question(
     request: Request,
     body: AskRequest,
     background_tasks: BackgroundTasks,
+    tenant_id: str | None = Depends(verify_api_key),
     embedding_service=Depends(get_embedding_service),
     vector_store=Depends(get_vector_store),
     llm_client=Depends(get_llm_client),
@@ -34,7 +35,7 @@ async def ask_question(
         llm_client=llm_client,
         observability=observability,
     )
-    return await service.ask(body, background_tasks=background_tasks)
+    return await service.ask(body, background_tasks=background_tasks, tenant_id=tenant_id)
 
 
 @router.post("/ask/stream", summary="Query indexed documents with streaming")
@@ -42,6 +43,7 @@ async def ask_question(
 async def ask_question_stream(
     request: Request,
     body: AskRequest,
+    tenant_id: str | None = Depends(verify_api_key),
     embedding_service=Depends(get_embedding_service),
     vector_store=Depends(get_vector_store),
     llm_client=Depends(get_llm_client),
@@ -53,7 +55,7 @@ async def ask_question_stream(
     )
 
     async def event_stream():
-        async for chunk in service.ask_stream(body):
+        async for chunk in service.ask_stream(body, tenant_id=tenant_id):
             yield f"data: {json.dumps(chunk)}\n\n"
         yield "data: [DONE]\n\n"
 
