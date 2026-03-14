@@ -47,11 +47,13 @@ async def ask_question_stream(
     embedding_service=Depends(get_embedding_service),
     vector_store=Depends(get_vector_store),
     llm_client=Depends(get_llm_client),
+    observability=Depends(get_observability),
 ):
     service = AskService(
         embedding_service=embedding_service,
         vector_store=vector_store,
         llm_client=llm_client,
+        observability=observability,
     )
 
     async def event_stream():
