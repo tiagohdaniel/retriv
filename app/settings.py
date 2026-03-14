@@ -22,8 +22,9 @@ class Settings(BaseSettings):
     chroma_cloud_database: str = ""
 
     # Chunking
-    chunk_size: int = 500
-    chunk_overlap: int = 50
+    chunking_strategy: str = "semantic"  # "semantic" | "fixed"
+    chunk_size: int = 800               # chars; semantic works better with larger values
+    chunk_overlap: int = 100
 
     # API auth
     api_auth_enabled: bool = False
