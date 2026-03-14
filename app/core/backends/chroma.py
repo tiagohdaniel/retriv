@@ -132,6 +132,28 @@ class ChromaVectorStore(VectorStoreBase):
         page = all_sources[offset: offset + limit]
         return page, total
 
+    def get_chunks(
+        self,
+        tenant_id: str | None = None,
+        source_ids: list[str] | None = None,
+        limit: int = 500,
+    ) -> list[dict]:
+        where = self._build_where(source_ids=source_ids, tenant_id=tenant_id)
+        kwargs: dict = {"include": ["documents", "metadatas"], "limit": limit}
+        if where:
+            kwargs["where"] = where
+        result = self.collection.get(**kwargs)
+        return [
+            {
+                "id": doc_id,
+                "document": doc,
+                "metadata": meta,
+            }
+            for doc_id, doc, meta in zip(
+                result["ids"], result["documents"], result["metadatas"]
+            )
+        ]
+
     def ping(self) -> None:
         self.collection.count()
 
