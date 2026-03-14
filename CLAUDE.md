@@ -165,6 +165,29 @@ app/
 
 ---
 
+## Roadmap do core
+
+### v1.1 — Qualidade RAG
+- Chunking semântico (por parágrafo/seção, não N caracteres fixos)
+- Reranker (cross-encoder reordena chunks após retrieval)
+- Híbrido BM25 + semântico (rejeita perguntas sem relação com os docs)
+
+### v1.2 — Analytics pipeline
+Análise de dados estruturados é genérica — pertence ao core, não aos agents.
+
+```
+POST /analyze
+├── recebe: pergunta em linguagem natural + fonte de dados
+├── executa: agregação real via código (não LLM)
+└── retorna: resultado → LLM formata a resposta
+```
+
+Diferença fundamental: RAG recupera trechos de texto. Analytics agrega dados estruturados. São pipelines complementares — um cliente pode usar ambos.
+
+Os **conectores** com fontes de dados específicas do cliente (planilha, API, banco) ficam no `*-agent`, não aqui.
+
+---
+
 ## O que NÃO pertence ao retriv
 
 **Tools de domínio específico nunca entram aqui.**
