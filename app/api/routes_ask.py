@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from app.schemas.models import AskRequest, AskResponse
-from app.dependencies import get_embedding_service, get_vector_store, get_llm_client, get_observability
+from app.dependencies import get_embedding_service, get_vector_store, get_llm_client, get_observability, get_reranker, get_settings
 from app.services.ask_service import AskService
 from app.core.auth import verify_api_key
 from app.core.rate_limit import limiter, ask_rate_limit
@@ -23,6 +23,8 @@ async def ask_question(
     vector_store=Depends(get_vector_store),
     llm_client=Depends(get_llm_client),
     observability=Depends(get_observability),
+    reranker=Depends(get_reranker),
+    settings=Depends(get_settings),
 ):
     """Ask a natural language question over indexed documents.
 
@@ -34,6 +36,8 @@ async def ask_question(
         vector_store=vector_store,
         llm_client=llm_client,
         observability=observability,
+        reranker=reranker,
+        reranker_top_k_fetch=settings.reranker_top_k_fetch,
     )
     return await service.ask(body, background_tasks=background_tasks, tenant_id=tenant_id)
 
@@ -48,12 +52,16 @@ async def ask_question_stream(
     vector_store=Depends(get_vector_store),
     llm_client=Depends(get_llm_client),
     observability=Depends(get_observability),
+    reranker=Depends(get_reranker),
+    settings=Depends(get_settings),
 ):
     service = AskService(
         embedding_service=embedding_service,
         vector_store=vector_store,
         llm_client=llm_client,
         observability=observability,
+        reranker=reranker,
+        reranker_top_k_fetch=settings.reranker_top_k_fetch,
     )
 
     async def event_stream():
