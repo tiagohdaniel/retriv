@@ -106,8 +106,9 @@ Avalia qualidade do RAG automaticamente após cada query (streaming e síncrono)
 | `CHROMA_CLOUD_TENANT` | — | Chroma Cloud |
 | `CHROMA_CLOUD_DATABASE` | — | Chroma Cloud |
 | `CHROMA_COLLECTION` | `documents` | Nome da coleção |
-| `CHUNK_SIZE` | `500` | Caracteres por chunk |
-| `CHUNK_OVERLAP` | `50` | Sobreposição entre chunks |
+| `CHUNKING_STRATEGY` | `semantic` | `semantic` (por parágrafo/frase) / `fixed` (N chars fixos) |
+| `CHUNK_SIZE` | `800` | Limite de chars por chunk (semântico usa como soft limit) |
+| `CHUNK_OVERLAP` | `100` | Sobreposição entre chunks |
 | `API_AUTH_ENABLED` | `false` | Habilita autenticação por API key |
 | `API_KEY` | — | Chave única (single-tenant) |
 | `API_KEYS` | — | Mapa `key:tenant_id,key:tenant_id` (multi-tenant) |
@@ -162,6 +163,29 @@ app/
 ├── settings.py                 # Todas as configs via env vars (pydantic-settings)
 └── main.py                     # App FastAPI + middlewares + routers
 ```
+
+---
+
+## Roadmap do core
+
+### v1.1 — Qualidade RAG
+- Chunking semântico (por parágrafo/seção, não N caracteres fixos)
+- Reranker (cross-encoder reordena chunks após retrieval)
+- Híbrido BM25 + semântico (rejeita perguntas sem relação com os docs)
+
+### v1.2 — Analytics pipeline
+Análise de dados estruturados é genérica — pertence ao core, não aos agents.
+
+```
+POST /analyze
+├── recebe: pergunta em linguagem natural + fonte de dados
+├── executa: agregação real via código (não LLM)
+└── retorna: resultado → LLM formata a resposta
+```
+
+Diferença fundamental: RAG recupera trechos de texto. Analytics agrega dados estruturados. São pipelines complementares — um cliente pode usar ambos.
+
+Os **conectores** com fontes de dados específicas do cliente (planilha, API, banco) ficam no `*-agent`, não aqui.
 
 ---
 

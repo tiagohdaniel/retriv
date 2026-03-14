@@ -3,7 +3,7 @@ from functools import lru_cache
 import chromadb
 
 from app.settings import Settings
-from app.core.chunker import TextChunker
+from app.core.chunker import TextChunker, SemanticChunker
 from app.core.embeddings import create_embedding_service
 from app.core.vector_store import VectorStoreBase
 from app.core.llm_client import LLMClientBase
@@ -49,9 +49,11 @@ def get_vector_store() -> VectorStoreBase:
 
 
 @lru_cache
-def get_chunker() -> TextChunker:
+def get_chunker():
     settings = get_settings()
-    return TextChunker(chunk_size=settings.chunk_size, chunk_overlap=settings.chunk_overlap)
+    if settings.chunking_strategy == "fixed":
+        return TextChunker(chunk_size=settings.chunk_size, chunk_overlap=settings.chunk_overlap)
+    return SemanticChunker(chunk_size=settings.chunk_size, chunk_overlap=settings.chunk_overlap)
 
 
 @lru_cache
