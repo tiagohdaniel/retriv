@@ -55,6 +55,20 @@ class VectorStoreBase(ABC):
         ...
 
     @abstractmethod
+    def get_chunks(
+        self,
+        tenant_id: str | None = None,
+        source_ids: list[str] | None = None,
+        limit: int = 500,
+    ) -> list[dict]:
+        """Fetch raw chunks for BM25 corpus building.
+
+        Returns up to `limit` chunks as dicts with keys: id, document, metadata.
+        Used by hybrid search — not intended for end-user responses.
+        """
+        ...
+
+    @abstractmethod
     def ping(self) -> None:
         """Verifica conectividade com o backend. Lança exceção se indisponível."""
         ...

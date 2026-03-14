@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     metrics_username: str = ""      # Basic auth for /metrics — leave empty to disable auth
     metrics_password: str = ""
 
+    # Hybrid search (BM25 + semantic → RRF) — disabled by default
+    hybrid_enabled: bool = False
+    hybrid_bm25_corpus_limit: int = 500  # max chunks loaded into BM25 corpus
+
     # Reranker — disabled by default (requires model download on first use)
     reranker_enabled: bool = False
     reranker_model: str = "BAAI/bge-reranker-base"  # multilingual; alt: Xenova/ms-marco-MiniLM-L-6-v2

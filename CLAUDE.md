@@ -107,6 +107,8 @@ Avalia qualidade do RAG automaticamente após cada query (streaming e síncrono)
 | `CHROMA_CLOUD_DATABASE` | — | Chroma Cloud |
 | `CHROMA_COLLECTION` | `documents` | Nome da coleção |
 | `CHUNKING_STRATEGY` | `semantic` | `semantic` (por parágrafo/frase) / `fixed` (N chars fixos) |
+| `HYBRID_ENABLED` | `false` | Habilita busca híbrida BM25 + semântica (RRF) |
+| `HYBRID_BM25_CORPUS_LIMIT` | `500` | Máx. chunks carregados no corpus BM25 |
 | `RERANKER_ENABLED` | `false` | Habilita cross-encoder reranker pós-retrieval |
 | `RERANKER_MODEL` | `BAAI/bge-reranker-base` | Modelo de reranking (multilingual) |
 | `RERANKER_TOP_K_FETCH` | `15` | Candidatos buscados no vector store antes do reranking |
