@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.11-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)
-![Tests](https://img.shields.io/badge/tests-35%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-43%20passed-brightgreen)
 ![CI](https://github.com/tiagohdaniel/retriv/actions/workflows/ci.yml/badge.svg)
 ![Docker](https://img.shields.io/badge/docker-ready-2496ED)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -15,8 +15,8 @@ Built with **FastAPI**, **ChromaDB**, **fastembed** (ONNX Runtime, no PyTorch), 
 
 ## Quick overview
 
-- **Index** any documentation via `POST /index` — text is chunked, embedded, and stored in a vector database
-- **Ask** natural language questions via `POST /ask` — relevant chunks are retrieved and sent to an LLM for a grounded answer with source citations
+- **Index** any documentation via `POST /index` — text is chunked semantically, embedded, and stored in a vector database
+- **Ask** natural language questions via `POST /ask` — relevant chunks are retrieved via hybrid search (semantic + BM25) and sent to an LLM for a grounded answer with source citations
 - **Stream** responses token-by-token via `POST /ask/stream` — SSE for real-time output
 - **Manage** indexed sources via `GET /sources` (paginated) and `DELETE /sources/{source_id}`
 - **Observe** via Prometheus metrics at `GET /metrics` — aggregated across all Gunicorn workers
@@ -34,42 +34,51 @@ Semantic search solves this by encoding content and queries into the same vector
 
 ---
 
-## RAG pipeline
+## RAG pipeline (v1.1)
 
 ```
 POST /index                          POST /ask
      │                                    │
      ▼                                    ▼
-TextChunker                    query → EmbeddingService
-(500 chars, 50 overlap)         (nomic-embed-text-v1.5)
+SemanticChunker                  query → EmbeddingService
+(paragraphs → merge up to 800ch)  (nomic-embed-text-v1.5)
      │                                    │
-     ▼                                    ▼
-EmbeddingService               VectorStore cosine search
-(nomic-embed-text-v1.5)        (top-k most similar chunks)
-     │                                    │
-     ▼                                    ▼
-VectorStore upsert             Filter by max_distance (default 0.8)
-                               (discard semantically unrelated chunks)
-                                          │
-                                          ▼
+     ▼                              ┌─────┴──────────────────┐
+EmbeddingService                   │                        │
+(nomic-embed-text-v1.5)       Semantic search           BM25 search
+     │                        (vector cosine)        (rank-bm25 + RRF)
+     ▼                              │                        │
+VectorStore upsert                 └─────────┬──────────────┘
+                                             ▼
+                                      RRF merge + top-k
+                                             │
+                                             ▼
+                                    Filter max_distance
+                                             │
+                                             ▼
                                 Guard: no chunks? → skip LLM
-                                          │
-                                          ▼
-                                 Build prompt with context
-                                          │
-                                          ▼
-                                  LLMClient (Claude)
-                                          │
-                                          ▼
-                                    AskResponse
-                                (answer + sources + scores)
-                                          │
-                               [async background task]
-                                          ▼
-                               LLM-as-judge evaluation
-                               (faithfulness + relevancy)
-                                          ▼
-                                  Langfuse trace + scores
+                                             │
+                                       [optional]
+                                             ▼
+                                    CrossEncoder reranker
+                                    (BAAI/bge-reranker-base)
+                                             │
+                                             ▼
+                                  Build prompt with context
+                                             │
+                                             ▼
+                                     LLMClient (Claude)
+                                             │
+                                             ▼
+                                       AskResponse
+                                   (answer + sources + scores)
+                                             │
+                                  [async background task]
+                                             ▼
+                                  LLM-as-judge evaluation
+                                  (faithfulness + relevancy)
+                                             ▼
+                                     Langfuse trace + scores
 ```
 
 ---
@@ -123,12 +132,44 @@ Runs embedded (local dev) or in server mode (production via docker-compose). The
 
 ---
 
-### Chunking: size 500, overlap 50
+### Chunking: semantic, 800 chars, 100 overlap
 
-- **Too small (< 100 chars):** Individual sentences lose context.
-- **Too large (> 1000 chars):** One chunk covers multiple topics, reducing precision.
-- **500 chars:** ~2-4 sentences. Enough context, specific enough to score well on a single-topic query.
-- **50 char overlap:** Ensures content at chunk boundaries appears in both adjacent chunks.
+The default chunker splits text by paragraph boundaries (double newlines), merges small paragraphs greedily up to 800 characters, and carries a tail overlap of ~100 characters into the next chunk to avoid cutting context at boundaries. Oversized paragraphs are split at sentence boundaries.
+
+- **Semantic vs fixed:** Fixed chunking cuts every N characters regardless of content. Semantic chunking respects paragraph and sentence boundaries, keeping related sentences together and improving retrieval precision.
+- **800 chars:** ~3-6 sentences per chunk. Large enough to carry context, specific enough to score well on single-topic queries.
+- **100 char overlap:** Ensures content at paragraph boundaries appears in both adjacent chunks.
+
+Set `CHUNKING_STRATEGY=fixed` to revert to character-based splitting.
+
+---
+
+### Hybrid search: BM25 + semantic → RRF
+
+When `HYBRID_ENABLED=true`, retrieval runs two independent searches and merges them:
+
+1. **Semantic search** — cosine similarity in the embedding vector space (finds by *meaning*)
+2. **BM25 search** — keyword frequency/IDF scoring via `rank-bm25` (finds by *exact terms*)
+
+Results are merged with **Reciprocal Rank Fusion** (RRF):
+
+```
+score(d) = Σ 1 / (k + rank_i(d))
+```
+
+Documents appearing in both lists get boosted. BM25 complements semantic search for exact-term queries (product codes, acronyms, proper nouns) where semantic similarity alone can miss.
+
+**Tokenization:** BM25 tokenises with a language-agnostic plural normaliser (`_normalize_token`) — strips common plural endings that work for both English and Portuguese without language-specific assumptions. Minimum stem length: 3 characters to avoid over-stripping short words.
+
+---
+
+### Cross-encoder reranker (optional)
+
+When `RERANKER_ENABLED=true`, after retrieving `RERANKER_TOP_K_FETCH` candidates (default 15), each `(query, document)` pair is scored independently by a cross-encoder (`BAAI/bge-reranker-base` — multilingual). The top `RERANKER_TOP_N` are kept and sent to the LLM.
+
+**Why cross-encoder over bi-encoder for reranking:** Bi-encoders (embedding models) compress query and document independently — they cannot model their interaction directly. Cross-encoders see both texts together, producing more accurate relevance scores at the cost of higher latency. This is why reranking is a second pass, not the primary retrieval step.
+
+Model download happens once on first use. Set `RERANKER_ENABLED=false` to skip entirely (zero overhead).
 
 ---
 
@@ -165,7 +206,20 @@ Evaluation uses Anthropic Claude (Haiku by default — cheap and fast) as an LLM
 
 Scores and full traces are sent to [Langfuse](https://langfuse.com) for historical analysis and dashboarding. Disabled by default — enable with `EVAL_ENABLED=true` and Langfuse credentials.
 
-**Why this matters:** reranking and hybrid search are not implemented yet — they will only be added if evaluation data shows the current retrieval quality is insufficient. Building features without metrics is guesswork.
+---
+
+### Known limitations
+
+**Semantic search bridges synonyms, but struggles with technical acronyms.**
+
+The embedding model understands natural language synonyms well (e.g. `falecer` → `morte`, `prazo de espera` → `carência`). However, it can fail when the document uses technical acronyms without expanding them in context (e.g. `IFPD` — *Invalidez Funcional Permanente e Total por Doença*), because the embedding space has limited signal to link an unexpanded acronym to its full description.
+
+Similarly, BM25 keyword search cannot match a query term to a synonym — it only scores exact or normalised-plural matches. Hybrid search mitigates this but does not eliminate it.
+
+**Mitigations to consider:**
+- Expand acronyms in the source document before indexing
+- Include a glossary section in indexed content that maps acronyms to their full forms
+- Increase `top_k` to surface more candidate chunks, giving the LLM a wider context
 
 ---
 
@@ -266,7 +320,7 @@ pytest tests/ -q
 ```
 
 ```
-35 passed in 0.72s
+43 passed in 0.72s
 ```
 
 Tests are also run automatically on every push and pull request via GitHub Actions.
@@ -281,8 +335,10 @@ app/
 │   ├── vector_store.py          # VectorStoreBase port
 │   ├── llm_client.py            # LLMClientBase port
 │   ├── observability.py         # ObservabilityBase port
-│   ├── chunker.py               # Text splitting
+│   ├── chunker.py               # SemanticChunker (default) + TextChunker (fixed)
 │   ├── embeddings.py            # fastembed (ONNX) with fallback chain
+│   ├── hybrid_search.py         # BM25Searcher + RRF merge
+│   ├── reranker.py              # FastEmbedReranker + NullReranker
 │   ├── auth.py                  # API key verification
 │   ├── rate_limit.py            # SlowAPI per-endpoint limits
 │   ├── logging_config.py        # structlog JSON/console config
@@ -316,6 +372,7 @@ tests/
 ├── test_index.py
 ├── test_ask.py
 ├── test_sources.py
+├── test_chunker.py
 ├── test_request_id.py
 ├── test_input_validation.py
 ├── test_metrics.py
@@ -340,13 +397,21 @@ docker-compose.yml
 | `LLM_TIMEOUT` | `30.0` | LLM request timeout in seconds |
 | `EMBEDDING_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | Embedding model (⚠️ reindex required on change) |
 | `API_AUTH_ENABLED` | `false` | Enable API key authentication |
-| `API_KEY` | *(empty)* | API key for authentication |
+| `API_KEY` | *(empty)* | API key for single-tenant auth |
+| `API_KEYS` | *(empty)* | Multi-tenant keys: `key1:tenant1,key2:tenant2` |
 | `CHROMA_MODE` | `embedded` | `embedded` (local) or `server` (production) |
 | `CHROMA_PERSIST_DIR` | `./chroma_data` | Path for embedded mode |
 | `CHROMA_HOST` | `localhost` | ChromaDB server host |
 | `CHROMA_PORT` | `8000` | ChromaDB server port |
-| `CHUNK_SIZE` | `500` | Characters per chunk |
-| `CHUNK_OVERLAP` | `50` | Overlap between adjacent chunks |
+| `CHUNKING_STRATEGY` | `semantic` | `semantic` (paragraph-aware) or `fixed` (character-based) |
+| `CHUNK_SIZE` | `800` | Target characters per chunk |
+| `CHUNK_OVERLAP` | `100` | Overlap between adjacent chunks |
+| `HYBRID_ENABLED` | `false` | Enable BM25 + semantic hybrid search with RRF |
+| `HYBRID_BM25_CORPUS_LIMIT` | `200` | Max chunks loaded into BM25 corpus (≤ 200 for Chroma Cloud) |
+| `RERANKER_ENABLED` | `false` | Enable cross-encoder reranking after retrieval |
+| `RERANKER_MODEL` | `BAAI/bge-reranker-base` | Cross-encoder model (multilingual) |
+| `RERANKER_TOP_K_FETCH` | `15` | Candidates retrieved before reranking |
+| `RERANKER_TOP_N` | `5` | Candidates kept after reranking (sent to LLM) |
 | `RATE_LIMIT_ENABLED` | `false` | Enable per-endpoint rate limiting |
 | `RATE_LIMIT_INDEX` | `10/minute` | Rate limit for `POST /index` |
 | `RATE_LIMIT_ASK` | `30/minute` | Rate limit for `POST /ask` |
@@ -370,13 +435,14 @@ docker-compose.yml
 - **FastAPI** + Uvicorn + Gunicorn (multi-worker)
 - **ChromaDB** — vector store (embedded or server mode)
 - **fastembed** — `nomic-embed-text-v1.5` via ONNX Runtime, no GPU required
+- **rank-bm25** — BM25Okapi for keyword search in hybrid mode
 - **Anthropic Claude** — LLM for answer synthesis and evaluation
 - **SlowAPI** — per-endpoint rate limiting
 - **structlog** — structured JSON logging with request ID correlation
 - **Prometheus** — metrics via `prometheus-fastapi-instrumentator`, multiprocess-safe
 - **Langfuse** — RAG evaluation tracing and dashboarding (optional)
 - **Pydantic v2** — request/response validation
-- **pytest** — 35 tests, no external dependencies required
+- **pytest** — 43 tests, no external dependencies required
 - **GitHub Actions** — CI on every push and pull request
 - **Docker** + docker-compose
 
@@ -384,12 +450,21 @@ docker-compose.yml
 
 ## Roadmap
 
-The following features are intentionally not implemented yet. They will only be added once evaluation data from Langfuse shows they are needed:
+### v1.1 — Retrieval quality ✅ complete
 
-- **Reranking** — cross-encoder reranking of retrieved chunks before LLM call (improves ordering)
-- **Hybrid search** — BM25 + vector search combined via Reciprocal Rank Fusion (improves recall for exact-term queries)
+- **Semantic chunking** — splits at paragraph/sentence boundaries instead of fixed character counts, preserving context
+- **Cross-encoder reranking** — optional second-pass scoring of `(query, doc)` pairs with `BAAI/bge-reranker-base`
+- **BM25 hybrid search** — keyword search merged with semantic via Reciprocal Rank Fusion (RRF)
 
-Building these without metrics would be guesswork. The evaluation pipeline exists precisely to make this decision data-driven.
+### v1.2 — Analytics pipeline (next)
+
+The goal is to expose aggregated usage and quality data without requiring Langfuse.
+
+Planned additions:
+- `POST /analyze` — run a batch of test questions and return precision/recall metrics
+- Per-source retrieval stats (which sources are cited most, which return low-relevance chunks)
+- Answer quality trends over time (faithfulness, relevancy scores stored locally)
+- Dashboard integration via the existing `/metrics` endpoint or a new `/analytics` endpoint
 
 ---
 
