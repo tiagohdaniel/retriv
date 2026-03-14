@@ -90,8 +90,10 @@ class AskService:
         prompt = self._build_prompt(request.question, docs)
         sources = self._build_sources(docs)
 
+        full_answer = ""
         async for chunk in self.llm.stream(prompt=prompt):
             if isinstance(chunk, str):
+                full_answer += chunk
                 yield {"type": "token", "content": chunk}
             else:
                 tokens = chunk.get("tokens_used", 0)
@@ -108,6 +110,13 @@ class AskService:
                     "tokens_used": tokens,
                     "model": model,
                 }
+                if self.observability:
+                    await self.observability.trace_query(
+                        question=request.question,
+                        contexts=[doc["document"] for doc in docs],
+                        answer=full_answer,
+                        metadata={"model": model, "docs_retrieved": len(docs), "tokens_used": tokens},
+                    )
 
     def _build_prompt(self, question: str, docs: list[dict]) -> str:
         context_blocks = []
