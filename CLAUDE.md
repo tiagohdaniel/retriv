@@ -107,6 +107,10 @@ Avalia qualidade do RAG automaticamente após cada query (streaming e síncrono)
 | `CHROMA_CLOUD_DATABASE` | — | Chroma Cloud |
 | `CHROMA_COLLECTION` | `documents` | Nome da coleção |
 | `CHUNKING_STRATEGY` | `semantic` | `semantic` (por parágrafo/frase) / `fixed` (N chars fixos) |
+| `RERANKER_ENABLED` | `false` | Habilita cross-encoder reranker pós-retrieval |
+| `RERANKER_MODEL` | `BAAI/bge-reranker-base` | Modelo de reranking (multilingual) |
+| `RERANKER_TOP_K_FETCH` | `15` | Candidatos buscados no vector store antes do reranking |
+| `RERANKER_TOP_N` | `5` | Chunks mantidos após reranking (enviados ao LLM) |
 | `CHUNK_SIZE` | `800` | Limite de chars por chunk (semântico usa como soft limit) |
 | `CHUNK_OVERLAP` | `100` | Sobreposição entre chunks |
 | `API_AUTH_ENABLED` | `false` | Habilita autenticação por API key |

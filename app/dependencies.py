@@ -4,6 +4,7 @@ import chromadb
 
 from app.settings import Settings
 from app.core.chunker import TextChunker, SemanticChunker
+from app.core.reranker import RerankerBase, NullReranker, FastEmbedReranker
 from app.core.embeddings import create_embedding_service
 from app.core.vector_store import VectorStoreBase
 from app.core.llm_client import LLMClientBase
@@ -54,6 +55,14 @@ def get_chunker():
     if settings.chunking_strategy == "fixed":
         return TextChunker(chunk_size=settings.chunk_size, chunk_overlap=settings.chunk_overlap)
     return SemanticChunker(chunk_size=settings.chunk_size, chunk_overlap=settings.chunk_overlap)
+
+
+@lru_cache
+def get_reranker() -> RerankerBase:
+    settings = get_settings()
+    if not settings.reranker_enabled:
+        return NullReranker()
+    return FastEmbedReranker(model_name=settings.reranker_model)
 
 
 @lru_cache

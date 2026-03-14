@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     metrics_username: str = ""      # Basic auth for /metrics — leave empty to disable auth
     metrics_password: str = ""
 
+    # Reranker — disabled by default (requires model download on first use)
+    reranker_enabled: bool = False
+    reranker_model: str = "BAAI/bge-reranker-base"  # multilingual; alt: Xenova/ms-marco-MiniLM-L-6-v2
+    reranker_top_k_fetch: int = 15  # how many candidates to retrieve before reranking
+    reranker_top_n: int = 5         # how many to keep after reranking (sent to LLM)
+
     # RAG evaluation — disabled by default (requires Langfuse account)
     eval_enabled: bool = False
     eval_model: str = "claude-haiku-4-5-20251001"  # lightweight model for LLM-as-judge
