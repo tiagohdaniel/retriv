@@ -2,33 +2,33 @@ import re
 
 _RRF_K = 60  # standard constant — controls rank penalty steepness
 
-# Portuguese plural/inflection suffix rules — ordered longest-first.
-# Each entry: (suffix_to_remove, replacement).
-# Goal: map inflected forms to their base so BM25 finds them.
-# Examples: esportes→esporte, radicais→radical, indenizações→indenização
-_PT_PLURAL_RULES = [
-    ("ções", "ção"),   # indenizações → indenização
-    ("ões", "ão"),     # exclusões → exclusão
-    ("ais", "al"),     # radicais → radical, contratuais → contratual
-    ("eis", "el"),     # fiéis → fiel
+# Plural normalisation rules — ordered longest-first.
+# Safe for Portuguese and English: they strip common plural endings
+# without introducing language-specific assumptions.
+# Rules specific to Portuguese (ções, ões) simply never match English tokens.
+_PLURAL_RULES = [
+    ("ções", "ção"),   # indenizações → indenização  (PT)
+    ("ões", "ão"),     # exclusões → exclusão         (PT)
+    ("ais", "al"),     # radicais → radical  /  trials → trial  (PT + EN)
+    ("eis", "el"),     # fiéis → fiel                 (PT)
     ("óis", "ol"),
     ("uis", "ul"),
-    ("s", ""),         # esportes → esporte, seguros → seguro, acidentes → acidente
+    ("s", ""),         # esportes → esporte  /  dogs → dog      (PT + EN)
 ]
 
 
-def _stem_pt(word: str) -> str:
-    """Minimal Portuguese suffix stripper for BM25.
+def _normalize_token(word: str) -> str:
+    """Normalise plural and inflectional suffixes for BM25 matching.
 
-    Not a full RSLP stemmer — just enough to normalise the most common
-    plural and inflectional endings so that keyword queries match document
-    terms regardless of number agreement.
+    Language-agnostic in practice: the rules strip common plural endings
+    that work for both Portuguese and English. Portuguese-specific suffixes
+    (ções, ões) simply never appear in English tokens, so they cause no harm.
 
     Minimum stem length: 3 characters (avoids over-stripping short words).
     """
     if len(word) <= 3:
         return word
-    for suffix, replacement in _PT_PLURAL_RULES:
+    for suffix, replacement in _PLURAL_RULES:
         if word.endswith(suffix):
             stem = word[: -len(suffix)] + replacement
             if len(stem) >= 3:
@@ -70,7 +70,7 @@ class BM25Searcher:
     def _tokenize(self, text: str) -> list[str]:
         """Lower-case word tokeniser with Portuguese suffix normalisation."""
         words = re.findall(r'\w+', text.lower())
-        return [_stem_pt(w) for w in words]
+        return [_normalize_token(w) for w in words]
 
 
 def rrf_merge(
