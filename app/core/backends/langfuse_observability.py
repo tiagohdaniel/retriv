@@ -83,6 +83,7 @@ class LangfuseObservability(ObservabilityBase):
         for name, value in scores.items():
             trace.score(name=name, value=value)
 
+        self._langfuse.flush()
         logger.info("eval_trace_sent", scores=scores, **metadata)
 
     async def _evaluate(
