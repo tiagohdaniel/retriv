@@ -1,12 +1,15 @@
 from app.schemas.models import AskRequest, AskResponse, SourceReference
 from app.core.logging_config import get_logger
 from app.core.metrics import llm_tokens_total, ask_no_context_total
+from app.core.hybrid_search import BM25Searcher, rrf_merge
 
 logger = get_logger("retriv.ask")
 
+_bm25 = BM25Searcher()
+
 
 class AskService:
-    """Orchestrates the RAG pipeline: embed → search → prompt → LLM → response."""
+    """Orchestrates the RAG pipeline: embed → retrieve → (rerank) → prompt → LLM."""
 
     def __init__(
         self,
@@ -16,6 +19,8 @@ class AskService:
         observability=None,
         reranker=None,
         reranker_top_k_fetch: int = 15,
+        hybrid_enabled: bool = False,
+        hybrid_corpus_limit: int = 500,
     ):
         self.embedding = embedding_service
         self.vector_store = vector_store
@@ -23,6 +28,12 @@ class AskService:
         self.observability = observability
         self.reranker = reranker
         self.reranker_top_k_fetch = reranker_top_k_fetch
+        self.hybrid_enabled = hybrid_enabled
+        self.hybrid_corpus_limit = hybrid_corpus_limit
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     async def ask(
         self,
@@ -30,20 +41,8 @@ class AskService:
         background_tasks=None,
         tenant_id: str | None = None,
     ) -> AskResponse:
-        query_embedding = self.embedding.encode([request.question])[0]
+        docs = self._retrieve(request, tenant_id)
 
-        docs = self.vector_store.search(
-            query_embedding=query_embedding,
-            top_k=self._fetch_top_k(request.top_k),
-            source_ids=request.source_ids,
-            max_distance=request.max_distance,
-            tenant_id=tenant_id,
-        )
-
-        if docs and self.reranker:
-            docs = self.reranker.rerank(request.question, docs)[:request.top_k]
-
-        # skip LLM call if no relevant context — avoids hallucination and saves tokens
         if not docs:
             ask_no_context_total.inc()
             logger.info("ask_no_context", question_len=len(request.question))
@@ -65,6 +64,7 @@ class AskService:
             docs_retrieved=len(docs),
             tokens_used=tokens,
             model=model,
+            hybrid=self.hybrid_enabled,
         )
 
         if self.observability and background_tasks is not None:
@@ -84,18 +84,7 @@ class AskService:
         )
 
     async def ask_stream(self, request: AskRequest, tenant_id: str | None = None):
-        query_embedding = self.embedding.encode([request.question])[0]
-
-        docs = self.vector_store.search(
-            query_embedding=query_embedding,
-            top_k=self._fetch_top_k(request.top_k),
-            source_ids=request.source_ids,
-            max_distance=request.max_distance,
-            tenant_id=tenant_id,
-        )
-
-        if docs and self.reranker:
-            docs = self.reranker.rerank(request.question, docs)[:request.top_k]
+        docs = self._retrieve(request, tenant_id)
 
         if not docs:
             ask_no_context_total.inc()
@@ -119,6 +108,7 @@ class AskService:
                     "ask_stream_completed",
                     docs_retrieved=len(docs),
                     tokens_used=tokens,
+                    hybrid=self.hybrid_enabled,
                 )
                 yield {
                     "type": "done",
@@ -134,9 +124,46 @@ class AskService:
                         metadata={"model": model, "docs_retrieved": len(docs), "tokens_used": tokens},
                     )
 
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _retrieve(self, request: AskRequest, tenant_id: str | None) -> list[dict]:
+        """Embed → search (hybrid or semantic) → rerank → top_k docs."""
+        query_embedding = self.embedding.encode([request.question])[0]
+        fetch_k = self._fetch_top_k(request.top_k)
+
+        if self.hybrid_enabled:
+            corpus = self.vector_store.get_chunks(
+                tenant_id=tenant_id,
+                source_ids=request.source_ids,
+                limit=self.hybrid_corpus_limit,
+            )
+            bm25_docs = _bm25.search(query=request.question, corpus=corpus, top_k=fetch_k)
+            semantic_docs = self.vector_store.search(
+                query_embedding=query_embedding,
+                top_k=fetch_k,
+                source_ids=request.source_ids,
+                max_distance=request.max_distance,
+                tenant_id=tenant_id,
+            )
+            docs = rrf_merge(semantic_docs, bm25_docs)[:fetch_k]
+        else:
+            docs = self.vector_store.search(
+                query_embedding=query_embedding,
+                top_k=fetch_k,
+                source_ids=request.source_ids,
+                max_distance=request.max_distance,
+                tenant_id=tenant_id,
+            )
+
+        if docs and self.reranker:
+            docs = self.reranker.rerank(request.question, docs)[:request.top_k]
+
+        return docs
+
     def _fetch_top_k(self, requested_top_k: int) -> int:
-        """When reranker is active, fetch more candidates than needed so the
-        cross-encoder has a richer pool to score. Falls back to requested_top_k."""
+        """Expand retrieval pool when reranker is active."""
         from app.core.reranker import NullReranker
         if self.reranker and not isinstance(self.reranker, NullReranker):
             return max(self.reranker_top_k_fetch, requested_top_k)
@@ -162,7 +189,7 @@ class AskService:
                 source_id=doc["metadata"].get("source_id", ""),
                 title=doc["metadata"].get("title", ""),
                 excerpt=doc["document"][:200] + "..." if len(doc["document"]) > 200 else doc["document"],
-                relevance_score=round(doc["distance"], 4),
+                relevance_score=round(doc.get("distance", 0.4), 4),
             )
             for doc in docs
         ]
