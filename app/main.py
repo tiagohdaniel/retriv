@@ -1,4 +1,6 @@
+import base64
 import os
+import secrets
 import traceback
 
 import structlog
@@ -65,6 +67,36 @@ app.include_router(routes_index.router, tags=["indexing"])
 app.include_router(routes_ask.router, tags=["search"])
 app.include_router(routes_sources.router, tags=["sources"])
 
+def _with_basic_auth(asgi_app):
+    """Wrap an ASGI app with Basic auth when METRICS_USERNAME/PASSWORD are set."""
+    username = _settings.metrics_username
+    password = _settings.metrics_password
+    if not username or not password:
+        return asgi_app
+
+    expected = base64.b64encode(f"{username}:{password}".encode()).decode()
+
+    async def _authed(scope, receive, send):
+        if scope["type"] == "http":
+            headers = dict(scope.get("headers", []))
+            auth = headers.get(b"authorization", b"").decode()
+            token = auth[len("Basic "):] if auth.startswith("Basic ") else ""
+            if not secrets.compare_digest(token, expected):
+                await send({
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [
+                        (b"www-authenticate", b'Basic realm="metrics"'),
+                        (b"content-length", b"0"),
+                    ],
+                })
+                await send({"type": "http.response.body", "body": b""})
+                return
+        await asgi_app(scope, receive, send)
+
+    return _authed
+
+
 if _settings.metrics_enabled:
     _instr = Instrumentator().instrument(app)
     if os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
@@ -73,7 +105,7 @@ if _settings.metrics_enabled:
 
         _registry = CollectorRegistry()
         _prom_multiprocess.MultiProcessCollector(_registry)
-        app.mount("/metrics", make_asgi_app(registry=_registry))
+        app.mount("/metrics", _with_basic_auth(make_asgi_app(registry=_registry)))
     else:
         _instr.expose(app, include_in_schema=False, tags=["system"])
 
