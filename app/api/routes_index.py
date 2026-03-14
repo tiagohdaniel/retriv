@@ -6,7 +6,7 @@ from app.services.index_service import IndexService
 from app.core.auth import verify_api_key
 from app.core.rate_limit import limiter, index_rate_limit
 
-router = APIRouter(dependencies=[Depends(verify_api_key)])
+router = APIRouter()
 
 
 @router.post("/index", response_model=IndexResponse, summary="Index a document")
@@ -14,6 +14,7 @@ router = APIRouter(dependencies=[Depends(verify_api_key)])
 def index_document(
     request: Request,
     body: IndexRequest,
+    tenant_id: str | None = Depends(verify_api_key),
     chunker=Depends(get_chunker),
     embedding_service=Depends(get_embedding_service),
     vector_store=Depends(get_vector_store),
@@ -24,4 +25,4 @@ def index_document(
         embedding_service=embedding_service,
         vector_store=vector_store,
     )
-    return service.index(body)
+    return service.index(body, tenant_id=tenant_id)

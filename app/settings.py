@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     # API auth
     api_auth_enabled: bool = False
     api_key: str = ""
+    # Multi-tenant: comma-separated "key:tenant_id" pairs
+    # Example: "abc123:guerreiro,xyz789:porto"
+    # When set, api_key (single-tenant) is ignored.
+    api_keys: str = ""
 
     # Rate limiting — disabled by default for local dev
     rate_limit_enabled: bool = False
