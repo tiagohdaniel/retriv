@@ -2,6 +2,39 @@ import re
 
 _RRF_K = 60  # standard constant — controls rank penalty steepness
 
+# Portuguese plural/inflection suffix rules — ordered longest-first.
+# Each entry: (suffix_to_remove, replacement).
+# Goal: map inflected forms to their base so BM25 finds them.
+# Examples: esportes→esporte, radicais→radical, indenizações→indenização
+_PT_PLURAL_RULES = [
+    ("ções", "ção"),   # indenizações → indenização
+    ("ões", "ão"),     # exclusões → exclusão
+    ("ais", "al"),     # radicais → radical, contratuais → contratual
+    ("eis", "el"),     # fiéis → fiel
+    ("óis", "ol"),
+    ("uis", "ul"),
+    ("s", ""),         # esportes → esporte, seguros → seguro, acidentes → acidente
+]
+
+
+def _stem_pt(word: str) -> str:
+    """Minimal Portuguese suffix stripper for BM25.
+
+    Not a full RSLP stemmer — just enough to normalise the most common
+    plural and inflectional endings so that keyword queries match document
+    terms regardless of number agreement.
+
+    Minimum stem length: 3 characters (avoids over-stripping short words).
+    """
+    if len(word) <= 3:
+        return word
+    for suffix, replacement in _PT_PLURAL_RULES:
+        if word.endswith(suffix):
+            stem = word[: -len(suffix)] + replacement
+            if len(stem) >= 3:
+                return stem
+    return word
+
 
 class BM25Searcher:
     """BM25 keyword search backed by rank-bm25 (pure Python).
@@ -35,8 +68,9 @@ class BM25Searcher:
         return [doc for _, doc in scored[:top_k]]
 
     def _tokenize(self, text: str) -> list[str]:
-        """Lower-case word tokeniser — works for Portuguese and English."""
-        return re.findall(r'\w+', text.lower())
+        """Lower-case word tokeniser with Portuguese suffix normalisation."""
+        words = re.findall(r'\w+', text.lower())
+        return [_stem_pt(w) for w in words]
 
 
 def rrf_merge(
