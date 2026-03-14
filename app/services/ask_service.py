@@ -8,11 +8,21 @@ logger = get_logger("retriv.ask")
 class AskService:
     """Orchestrates the RAG pipeline: embed → search → prompt → LLM → response."""
 
-    def __init__(self, embedding_service, vector_store, llm_client, observability=None):
+    def __init__(
+        self,
+        embedding_service,
+        vector_store,
+        llm_client,
+        observability=None,
+        reranker=None,
+        reranker_top_k_fetch: int = 15,
+    ):
         self.embedding = embedding_service
         self.vector_store = vector_store
         self.llm = llm_client
         self.observability = observability
+        self.reranker = reranker
+        self.reranker_top_k_fetch = reranker_top_k_fetch
 
     async def ask(
         self,
@@ -24,11 +34,14 @@ class AskService:
 
         docs = self.vector_store.search(
             query_embedding=query_embedding,
-            top_k=request.top_k,
+            top_k=self._fetch_top_k(request.top_k),
             source_ids=request.source_ids,
             max_distance=request.max_distance,
             tenant_id=tenant_id,
         )
+
+        if docs and self.reranker:
+            docs = self.reranker.rerank(request.question, docs)[:request.top_k]
 
         # skip LLM call if no relevant context — avoids hallucination and saves tokens
         if not docs:
@@ -75,11 +88,14 @@ class AskService:
 
         docs = self.vector_store.search(
             query_embedding=query_embedding,
-            top_k=request.top_k,
+            top_k=self._fetch_top_k(request.top_k),
             source_ids=request.source_ids,
             max_distance=request.max_distance,
             tenant_id=tenant_id,
         )
+
+        if docs and self.reranker:
+            docs = self.reranker.rerank(request.question, docs)[:request.top_k]
 
         if not docs:
             ask_no_context_total.inc()
@@ -117,6 +133,14 @@ class AskService:
                         answer=full_answer,
                         metadata={"model": model, "docs_retrieved": len(docs), "tokens_used": tokens},
                     )
+
+    def _fetch_top_k(self, requested_top_k: int) -> int:
+        """When reranker is active, fetch more candidates than needed so the
+        cross-encoder has a richer pool to score. Falls back to requested_top_k."""
+        from app.core.reranker import NullReranker
+        if self.reranker and not isinstance(self.reranker, NullReranker):
+            return max(self.reranker_top_k_fetch, requested_top_k)
+        return requested_top_k
 
     def _build_prompt(self, question: str, docs: list[dict]) -> str:
         context_blocks = []
