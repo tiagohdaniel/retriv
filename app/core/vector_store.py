@@ -8,6 +8,10 @@ class VectorStoreBase(ABC):
     Services depend only on this interface — never on a concrete backend.
     Swapping backends (ChromaDB → Pinecone, pgvector, etc.) requires
     only a new implementation and a config change.
+
+    tenant_id semantics:
+        None  — no tenant filtering (auth disabled, single-tenant deploys)
+        str   — filter/scope all operations to this tenant
     """
 
     @abstractmethod
@@ -17,6 +21,7 @@ class VectorStoreBase(ABC):
         title: str,
         chunks: list[str],
         embeddings: list[list[float]],
+        tenant_id: str | None = None,
         extra_metadata: dict | None = None,
     ) -> None: ...
 
@@ -27,13 +32,19 @@ class VectorStoreBase(ABC):
         top_k: int = 5,
         source_ids: list[str] | None = None,
         max_distance: float = 0.8,
+        tenant_id: str | None = None,
     ) -> list[dict]: ...
 
     @abstractmethod
-    def delete_source(self, source_id: str) -> int: ...
+    def delete_source(self, source_id: str, tenant_id: str | None = None) -> int: ...
 
     @abstractmethod
-    def list_sources(self, limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
+    def list_sources(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        tenant_id: str | None = None,
+    ) -> tuple[list[dict], int]:
         """Return a page of sources and the total source count.
 
         ChromaDB has no native GROUP BY, so all chunk metadata is scanned

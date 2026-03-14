@@ -14,7 +14,12 @@ class AskService:
         self.llm = llm_client
         self.observability = observability
 
-    async def ask(self, request: AskRequest, background_tasks=None) -> AskResponse:
+    async def ask(
+        self,
+        request: AskRequest,
+        background_tasks=None,
+        tenant_id: str | None = None,
+    ) -> AskResponse:
         query_embedding = self.embedding.encode([request.question])[0]
 
         docs = self.vector_store.search(
@@ -22,6 +27,7 @@ class AskService:
             top_k=request.top_k,
             source_ids=request.source_ids,
             max_distance=request.max_distance,
+            tenant_id=tenant_id,
         )
 
         # skip LLM call if no relevant context — avoids hallucination and saves tokens
@@ -64,7 +70,7 @@ class AskService:
             model=model,
         )
 
-    async def ask_stream(self, request: AskRequest):
+    async def ask_stream(self, request: AskRequest, tenant_id: str | None = None):
         query_embedding = self.embedding.encode([request.question])[0]
 
         docs = self.vector_store.search(
@@ -72,6 +78,7 @@ class AskService:
             top_k=request.top_k,
             source_ids=request.source_ids,
             max_distance=request.max_distance,
+            tenant_id=tenant_id,
         )
 
         if not docs:

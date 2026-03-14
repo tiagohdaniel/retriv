@@ -5,10 +5,11 @@ services:
       - chroma_data:/chroma/chroma
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "httpx", "http://localhost:8000/api/v1/heartbeat"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      # chromadb/chroma:1.0.0 has no curl/httpx/python — check TCP port directly
+      test: ["CMD", "sh", "-c", "grep -q ':1F40 ' /proc/net/tcp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   api:
     build: .
