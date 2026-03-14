@@ -55,7 +55,7 @@ class Settings(BaseSettings):
 
     # Hybrid search (BM25 + semantic → RRF) — disabled by default
     hybrid_enabled: bool = False
-    hybrid_bm25_corpus_limit: int = 500  # max chunks loaded into BM25 corpus
+    hybrid_bm25_corpus_limit: int = 200  # max chunks loaded into BM25 corpus (Chroma Cloud limit: 300)
 
     # Reranker — disabled by default (requires model download on first use)
     reranker_enabled: bool = False

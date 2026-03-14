@@ -134,12 +134,16 @@ class AskService:
         fetch_k = self._fetch_top_k(request.top_k)
 
         if self.hybrid_enabled:
-            corpus = self.vector_store.get_chunks(
-                tenant_id=tenant_id,
-                source_ids=request.source_ids,
-                limit=self.hybrid_corpus_limit,
-            )
-            bm25_docs = _bm25.search(query=request.question, corpus=corpus, top_k=fetch_k)
+            try:
+                corpus = self.vector_store.get_chunks(
+                    tenant_id=tenant_id,
+                    source_ids=request.source_ids,
+                    limit=self.hybrid_corpus_limit,
+                )
+                bm25_docs = _bm25.search(query=request.question, corpus=corpus, top_k=fetch_k)
+            except Exception as e:
+                logger.warning("hybrid_bm25_fallback", error=str(e))
+                bm25_docs = []
             semantic_docs = self.vector_store.search(
                 query_embedding=query_embedding,
                 top_k=fetch_k,
