@@ -42,6 +42,8 @@ class Settings(BaseSettings):
 
     # Observability
     metrics_enabled: bool = True    # exposes GET /metrics (Prometheus format)
+    metrics_username: str = ""      # Basic auth for /metrics — leave empty to disable auth
+    metrics_password: str = ""
 
     # RAG evaluation — disabled by default (requires Langfuse account)
     eval_enabled: bool = False
