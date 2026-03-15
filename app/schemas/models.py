@@ -14,6 +14,20 @@ class IndexResponse(BaseModel):
     chunks_indexed: int
 
 
+class IndexJobResponse(BaseModel):
+    job_id: str
+    status: str = "processing"
+    source_id: str
+
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    status: str  # processing | done | failed
+    source_id: str
+    chunks_indexed: int = 0
+    error: str | None = None
+
+
 class AskRequest(BaseModel):
     question: str = Field(min_length=5, max_length=1_000, description="Natural language question")
     top_k: int = Field(default=5, ge=1, le=20, description="Number of chunks to retrieve")
