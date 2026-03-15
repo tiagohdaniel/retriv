@@ -4,6 +4,8 @@ from app.core.metrics import documents_indexed_total, chunks_indexed_total
 
 logger = get_logger("retriv.index")
 
+_EMBED_BATCH_SIZE = 32  # chunks per ONNX inference call — prevents OOM on large documents
+
 
 class IndexService:
     """Orchestrates: chunk → embed → store.
@@ -25,8 +27,9 @@ class IndexService:
             logger.warning("index_no_chunks", source_id=request.source_id)
             return IndexResponse(source_id=request.source_id, chunks_indexed=0)
 
-        # encode all chunks in a single batch call
-        embeddings = self.embedding.encode(chunks)
+        embeddings: list[list[float]] = []
+        for i in range(0, len(chunks), _EMBED_BATCH_SIZE):
+            embeddings.extend(self.embedding.encode(chunks[i : i + _EMBED_BATCH_SIZE]))
 
         self.vector_store.upsert_chunks(
             source_id=request.source_id,
