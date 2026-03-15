@@ -10,11 +10,25 @@ SAMPLE_DOC = {
 }
 
 
-def test_index_returns_chunk_count(client):
+def test_index_returns_job_id(client):
     response = client.post("/index", json=SAMPLE_DOC)
-    assert response.status_code == 200
+    assert response.status_code == 202
     data = response.json()
     assert data["source_id"] == "fastapi-docs"
+    assert "job_id" in data
+    assert data["status"] == "processing"
+
+
+def test_index_job_completes(client):
+    """Background task runs synchronously in TestClient — job is done after POST."""
+    response = client.post("/index", json=SAMPLE_DOC)
+    assert response.status_code == 202
+    job_id = response.json()["job_id"]
+
+    status = client.get(f"/index/status/{job_id}")
+    assert status.status_code == 200
+    data = status.json()
+    assert data["status"] == "done"
     assert data["chunks_indexed"] >= 1
 
 
@@ -22,8 +36,11 @@ def test_index_is_idempotent(client):
     """Re-indexing the same source_id replaces existing chunks."""
     client.post("/index", json=SAMPLE_DOC)
     response = client.post("/index", json=SAMPLE_DOC)
-    assert response.status_code == 200
-    assert response.json()["chunks_indexed"] >= 1
+    assert response.status_code == 202
+    job_id = response.json()["job_id"]
+
+    status = client.get(f"/index/status/{job_id}")
+    assert status.json()["chunks_indexed"] >= 1
 
 
 def test_index_requires_source_id(client):
