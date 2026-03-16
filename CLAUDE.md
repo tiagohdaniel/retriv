@@ -199,17 +199,31 @@ Os **conectores** com fontes de dados específicas do cliente (planilha, API, ba
 
 **Tools de domínio específico nunca entram aqui.**
 
-O retriv é o core genérico — RAG puro. Quando um cliente precisar de agents com ações específicas (abrir sinistro, rastrear pedido, protocolar documento), isso vai em um repositório separado `<cliente>-agent` que importa o retriv como dependência.
+O retriv é o core genérico — RAG puro. Quando um cliente precisar de agents com ações específicas (abrir sinistro, rastrear pedido, protocolar documento), isso vai em um repositório separado que importa o retriv como dependência.
+
+**Convenção de nomes:** o repositório se chama pelo **domínio** em inglês, nunca pelo nome da empresa.
 
 ```
 # ERRADO — nunca fazer isso:
-app/agents/guerreiro/tools/abrir_sinistro.py  ← lógica de negócio do cliente aqui
+app/agents/guerreiro/tools/abrir_sinistro.py  ← lógica de negócio aqui dentro do retriv
 
-# CERTO:
-repositório separado: guerreiro-agent/
+# ERRADO — nome da empresa, não do domínio:
+repositório: guerreiro-agent/
+
+# CERTO — nome do domínio em inglês:
+repositório: insurance-agent/
     requirements.txt → retriv @ git+https://...
     tools/abrir_sinistro.py
+
+repositório: accounting-agent/
+    requirements.txt → retriv @ git+https://...
+    tools/simulador_fiscal.py
 ```
+
+Agents verticais planejados (servem múltiplos clientes do mesmo setor):
+- `insurance-agent` — seguradoras (1º cliente: Guerreiro)
+- `accounting-agent` — escritórios contábeis (1º cliente: Maranata)
+- `legal-agent` — escritórios jurídicos
 
 O que **pode** ficar no retriv: contratos genéricos (`AgentBase`, `ToolBase`, `AgentOrchestrator`) — são só interfaces, sem lógica de domínio.
 
