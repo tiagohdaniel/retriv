@@ -28,6 +28,11 @@ class JobStatusResponse(BaseModel):
     error: str | None = None
 
 
+class ConversationMessage(BaseModel):
+    role: str = Field(description="'user' or 'assistant'")
+    content: str = Field(max_length=4_000)
+
+
 class AskRequest(BaseModel):
     question: str = Field(min_length=5, max_length=1_000, description="Natural language question")
     top_k: int = Field(default=5, ge=1, le=20, description="Number of chunks to retrieve")
@@ -37,6 +42,10 @@ class AskRequest(BaseModel):
     max_distance: float = Field(
         default=0.45, ge=0.0, le=2.0,
         description="Maximum cosine distance (0=identical, 2=opposite). Chunks above this threshold are discarded."
+    )
+    history: list[ConversationMessage] | None = Field(
+        default=None,
+        description="Previous conversation turns (up to 6 messages). Enables follow-up questions.",
     )
 
 
