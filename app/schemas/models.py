@@ -72,3 +72,21 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     version: str
     checks: dict[str, str] = Field(default_factory=dict)
+
+
+class DataSource(BaseModel):
+    type: str = Field(description="File type: 'csv', 'xlsx', or 'json'")
+    content: str = Field(description="Base64-encoded file content")
+    filename: str | None = Field(default=None, description="Original filename (optional, used as context)")
+
+
+class AnalyzeRequest(BaseModel):
+    question: str = Field(min_length=5, max_length=1_000, description="Natural language question about the data")
+    source: DataSource
+
+
+class AnalyzeResponse(BaseModel):
+    answer: str
+    computation: dict | None = Field(default=None, description="Raw computation result for client-side use")
+    tokens_used: int = 0
+    model: str = ""

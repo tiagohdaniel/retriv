@@ -30,3 +30,20 @@ ask_no_context_total = Counter(
     "retriv_ask_no_context_total",
     "Queries that returned no relevant context after distance filtering",
 )
+
+analytics_requests_total = Counter(
+    "retriv_analytics_requests_total",
+    "Total POST /analyze requests",
+)
+
+analytics_tokens_total = Counter(
+    "retriv_analytics_tokens_total",
+    "Total LLM tokens consumed by the analytics pipeline",
+    ["model"],
+)
+
+analytics_errors_total = Counter(
+    "retriv_analytics_errors_total",
+    "Total errors in the analytics pipeline",
+    ["reason"],
+)
