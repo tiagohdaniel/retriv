@@ -9,10 +9,12 @@ from app.core.embeddings import create_embedding_service
 from app.core.vector_store import VectorStoreBase
 from app.core.llm_client import LLMClientBase
 from app.core.observability import ObservabilityBase
+from app.core.data_analyzer import DataAnalyzerBase
 from app.core.backends.chroma import ChromaVectorStore
 from app.core.backends.anthropic import AnthropicClient
 from app.core.backends.null_observability import NullObservability
 from app.core.backends.langfuse_observability import LangfuseObservability
+from app.core.backends.pandas_analyzer import PandasAnalyzer
 
 
 @lru_cache
@@ -82,6 +84,12 @@ def get_llm_client() -> LLMClientBase:
         f"To add a new provider: create app/core/backends/<provider>.py, "
         f"implement LLMClientBase, and add an elif branch here."
     )
+
+
+@lru_cache
+def get_analyzer() -> DataAnalyzerBase:
+    settings = get_settings()
+    return PandasAnalyzer(max_rows=settings.analytics_max_rows)
 
 
 @lru_cache
