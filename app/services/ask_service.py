@@ -51,7 +51,7 @@ class AskService:
                        "Make sure you have indexed content via POST /index.",
             )
 
-        prompt = self._build_prompt(request.question, docs)
+        prompt = self._build_prompt(request.question, docs, request.history)
         result = await self.llm.generate(prompt=prompt)
         sources = self._build_sources(docs)
 
@@ -92,7 +92,7 @@ class AskService:
             yield {"type": "token", "content": "No relevant documentation found. Make sure you have indexed content via POST /index."}
             return
 
-        prompt = self._build_prompt(request.question, docs)
+        prompt = self._build_prompt(request.question, docs, request.history)
         sources = self._build_sources(docs)
 
         full_answer = ""
@@ -173,7 +173,7 @@ class AskService:
             return max(self.reranker_top_k_fetch, requested_top_k)
         return requested_top_k
 
-    def _build_prompt(self, question: str, docs: list[dict]) -> str:
+    def _build_prompt(self, question: str, docs: list[dict], history: list | None = None) -> str:
         context_blocks = []
         for i, doc in enumerate(docs, 1):
             meta = doc.get("metadata", {})
@@ -182,8 +182,18 @@ class AskService:
                 f"{doc['document']}"
             )
         context = "\n\n".join(context_blocks)
+
+        history_section = ""
+        if history:
+            lines = []
+            for msg in history:
+                prefix = "User" if msg.role == "user" else "Assistant"
+                lines.append(f"{prefix}: {msg.content}")
+            history_section = "## Previous conversation\n\n" + "\n\n".join(lines) + "\n\n"
+
         return (
             f"## Documentation\n\n{context}\n\n"
+            f"{history_section}"
             f"## Question\n\n{question}"
         )
 
