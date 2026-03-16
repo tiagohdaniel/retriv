@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.11-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)
-![Tests](https://img.shields.io/badge/tests-43%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-71%20passed-brightgreen)
 ![CI](https://github.com/tiagohdaniel/retriv/actions/workflows/ci.yml/badge.svg)
 ![Docker](https://img.shields.io/badge/docker-ready-2496ED)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -18,6 +18,7 @@ Built with **FastAPI**, **ChromaDB**, **fastembed** (ONNX Runtime, no PyTorch), 
 - **Index** any documentation via `POST /index` — text is chunked semantically, embedded, and stored in a vector database
 - **Ask** natural language questions via `POST /ask` — relevant chunks are retrieved via hybrid search (semantic + BM25) and sent to an LLM for a grounded answer with source citations
 - **Stream** responses token-by-token via `POST /ask/stream` — SSE for real-time output
+- **Analyze** structured data via `POST /analyze` — send a CSV/XLSX/JSON file and a natural language question; pandas computes deterministically, the LLM only formats the result
 - **Manage** indexed sources via `GET /sources` (paginated) and `DELETE /sources/{source_id}`
 - **Observe** via Prometheus metrics at `GET /metrics` — aggregated across all Gunicorn workers
 - **Evaluate** RAG quality automatically via LLM-as-judge scoring sent to Langfuse (optional)
@@ -34,7 +35,7 @@ Semantic search solves this by encoding content and queries into the same vector
 
 ---
 
-## RAG pipeline (v1.1)
+## RAG pipeline (`POST /ask`)
 
 ```
 POST /index                          POST /ask
@@ -83,28 +84,80 @@ VectorStore upsert                 └─────────┬────
 
 ---
 
+## Analytics pipeline (`POST /analyze`)
+
+```
+POST /analyze
+     │
+     ▼
+base64 decode (CSV / XLSX / JSON)
+     │
+     ▼
+PandasAnalyzer
+├── load DataFrame
+├── infer intent from question (heuristics, no LLM)
+│   └── sum · mean · max · min · count · list · describe
+├── detect target column (name found in question)
+├── detect group column ("por X" / "by X")
+└── execute deterministically → AnalysisResult
+     │
+     ▼
+Build prompt: dataset info + computed result
+     │
+     ▼
+LLMClient (Claude) — formats result into natural language
+     │
+     ▼
+AnalyzeResponse
+├── answer (natural language)
+└── computation (raw result for client use)
+```
+
+**Why this matters:** LLMs cannot aggregate data reliably. Asking Claude to sum 10,000 rows from a spreadsheet will produce wrong answers. This pipeline computes first, then formats — correctness is guaranteed by pandas, not by the model.
+
+**Supported file types:** CSV, XLSX, JSON (base64-encoded in the request body)
+
+**Operations inferred from the question (PT and EN):**
+
+| Keywords | Operation |
+|---|---|
+| `total`, `soma`, `sum` | Sum |
+| `média`, `average`, `mean` | Mean |
+| `maior`, `máximo`, `max`, `highest` | Max |
+| `menor`, `mínimo`, `min`, `lowest` | Min |
+| `quantos`, `count`, `how many` | Count |
+| `listar`, `list`, `top N` | List first N rows |
+| *(no keyword matched)* | Descriptive stats |
+
+**Grouping:** Include "por X" or "by X" in the question to group results (e.g. *"total de vendas por região"* → `groupby("região").sum()`).
+
+---
+
 ## Architecture
 
 retriv follows Hexagonal Architecture (Ports & Adapters). The core never knows about infrastructure.
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│                      CONTRACTS (ports)                     │
-│   VectorStoreBase · LLMClientBase · ObservabilityBase      │
-└────────┬───────────────────────┬───────────────────────────┘
-         │                       │
-┌────────▼────────┐   ┌──────────▼──────────────────────────┐
-│    BACKENDS     │   │             SERVICES                 │
-│  chroma.py      │   │  AskService   — RAG pipeline         │
-│  anthropic.py   │   │  IndexService — chunk/embed/store    │
-│  langfuse_      │   └─────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                         CONTRACTS (ports)                        │
+│  VectorStoreBase · LLMClientBase · ObservabilityBase             │
+│  DataAnalyzerBase                                                │
+└────────┬─────────────────────────┬───────────────────────────────┘
+         │                         │
+┌────────▼────────┐   ┌────────────▼────────────────────────────┐
+│    BACKENDS     │   │              SERVICES                    │
+│  chroma.py      │   │  AskService      — RAG pipeline          │
+│  anthropic.py   │   │  IndexService    — chunk/embed/store     │
+│  pandas_        │   │  AnalyticsService — analyze → LLM format │
+│  analyzer.py    │   └──────────────────────────────────────────┘
+│  langfuse_      │
 │  observability  │
 │  null_          │
 │  observability  │
 └─────────────────┘
 ```
 
-Adding a new vector DB, LLM provider, or observability backend = new file in `app/core/backends/`. Core services never change.
+Adding a new vector DB, LLM provider, observability backend, or data analyzer = new file in `app/core/backends/`. Core services never change.
 
 ---
 
@@ -230,6 +283,7 @@ Similarly, BM25 keyword search cannot match a query term to a synonym — it onl
 | `POST` | `/index` | Yes | Index a document |
 | `POST` | `/ask` | Yes | Ask a question, get a grounded answer |
 | `POST` | `/ask/stream` | Yes | Ask with streaming (SSE) |
+| `POST` | `/analyze` | Yes | Analyze structured data (CSV/XLSX/JSON) with a natural language question |
 | `GET` | `/sources` | Yes | List indexed sources (paginated) |
 | `DELETE` | `/sources/{source_id}` | Yes | Remove all chunks for a source |
 | `GET` | `/health` | No | Health check (verifies ChromaDB connectivity) |
@@ -320,7 +374,7 @@ pytest tests/ -q
 ```
 
 ```
-43 passed in 0.72s
+71 passed in ~0.8s
 ```
 
 Tests are also run automatically on every push and pull request via GitHub Actions.
@@ -335,6 +389,7 @@ app/
 │   ├── vector_store.py          # VectorStoreBase port
 │   ├── llm_client.py            # LLMClientBase port
 │   ├── observability.py         # ObservabilityBase port
+│   ├── data_analyzer.py         # DataAnalyzerBase port
 │   ├── chunker.py               # SemanticChunker (default) + TextChunker (fixed)
 │   ├── embeddings.py            # fastembed (ONNX) with fallback chain
 │   ├── hybrid_search.py         # BM25Searcher + RRF merge
@@ -343,13 +398,10 @@ app/
 │   ├── rate_limit.py            # SlowAPI per-endpoint limits
 │   ├── logging_config.py        # structlog JSON/console config
 │   ├── metrics.py               # Custom Prometheus counters
-│   ├── agent/
-│   │   ├── base.py              # ToolBase interface
-│   │   ├── orchestrator.py      # Generic agentic loop
-│   │   └── tools/rag_tool.py    # RAG as a pluggable tool
 │   └── backends/
 │       ├── chroma.py            # ChromaVectorStore
 │       ├── anthropic.py         # AnthropicClient
+│       ├── pandas_analyzer.py   # PandasAnalyzer (intent inference + computation)
 │       ├── langfuse_            # LangfuseObservability (eval + tracing)
 │       │   observability.py
 │       └── null_observability.py # No-op (eval disabled)
@@ -357,11 +409,13 @@ app/
 │   └── logging_middleware.py    # Request ID correlation
 ├── services/
 │   ├── ask_service.py           # RAG pipeline orchestration
-│   └── index_service.py         # Indexing pipeline orchestration
+│   ├── index_service.py         # Indexing pipeline orchestration
+│   └── analytics_service.py     # Analytics pipeline orchestration
 ├── api/
 │   ├── routes_index.py
 │   ├── routes_ask.py
-│   └── routes_sources.py
+│   ├── routes_sources.py
+│   └── routes_analyze.py
 ├── schemas/models.py
 ├── dependencies.py              # DI wiring
 ├── settings.py                  # Config from .env
@@ -372,6 +426,7 @@ tests/
 ├── test_index.py
 ├── test_ask.py
 ├── test_sources.py
+├── test_analyze.py
 ├── test_chunker.py
 ├── test_request_id.py
 ├── test_input_validation.py
@@ -412,10 +467,13 @@ docker-compose.yml
 | `RERANKER_MODEL` | `BAAI/bge-reranker-base` | Cross-encoder model (multilingual) |
 | `RERANKER_TOP_K_FETCH` | `15` | Candidates retrieved before reranking |
 | `RERANKER_TOP_N` | `5` | Candidates kept after reranking (sent to LLM) |
+| `ANALYTICS_MAX_ROWS` | `100000` | Max rows allowed in uploaded datasets |
+| `ANALYTICS_MAX_FILE_SIZE_MB` | `10` | Max file size for `POST /analyze` (MB) |
 | `RATE_LIMIT_ENABLED` | `false` | Enable per-endpoint rate limiting |
 | `RATE_LIMIT_INDEX` | `10/minute` | Rate limit for `POST /index` |
 | `RATE_LIMIT_ASK` | `30/minute` | Rate limit for `POST /ask` |
 | `RATE_LIMIT_SOURCES` | `60/minute` | Rate limit for `GET /sources` |
+| `RATE_LIMIT_ANALYZE` | `20/minute` | Rate limit for `POST /analyze` |
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `LOG_FORMAT` | `json` | `json` (production) or `console` (local dev) |
 | `CORS_ORIGINS` | `*` | Allowed origins (comma-separated or `*`) |
@@ -436,13 +494,14 @@ docker-compose.yml
 - **ChromaDB** — vector store (embedded or server mode)
 - **fastembed** — `nomic-embed-text-v1.5` via ONNX Runtime, no GPU required
 - **rank-bm25** — BM25Okapi for keyword search in hybrid mode
+- **pandas** + **openpyxl** — deterministic data analysis for the analytics pipeline
 - **Anthropic Claude** — LLM for answer synthesis and evaluation
 - **SlowAPI** — per-endpoint rate limiting
 - **structlog** — structured JSON logging with request ID correlation
 - **Prometheus** — metrics via `prometheus-fastapi-instrumentator`, multiprocess-safe
 - **Langfuse** — RAG evaluation tracing and dashboarding (optional)
 - **Pydantic v2** — request/response validation
-- **pytest** — 43 tests, no external dependencies required
+- **pytest** — 71 tests, no external dependencies required
 - **GitHub Actions** — CI on every push and pull request
 - **Docker** + docker-compose
 
@@ -456,15 +515,19 @@ docker-compose.yml
 - **Cross-encoder reranking** — optional second-pass scoring of `(query, doc)` pairs with `BAAI/bge-reranker-base`
 - **BM25 hybrid search** — keyword search merged with semantic via Reciprocal Rank Fusion (RRF)
 
-### v1.2 — Analytics pipeline (next)
+### v1.2 — Analytics pipeline ✅ complete
 
-The goal is to expose aggregated usage and quality data without requiring Langfuse.
+- **`POST /analyze`** — analyze structured data (CSV, XLSX, JSON) with a natural language question
+- Heuristic intent inference (PT + EN): sum, mean, max, min, count, list, describe
+- Automatic grouping: *"total de vendas por região"* → `groupby("região").sum()`
+- Deterministic computation via pandas — the LLM only formats the result, never aggregates raw data
+- File size guard (default 10 MB), row limit (default 100k), Prometheus metrics
 
-Planned additions:
-- `POST /analyze` — run a batch of test questions and return precision/recall metrics
-- Per-source retrieval stats (which sources are cited most, which return low-relevance chunks)
-- Answer quality trends over time (faithfulness, relevancy scores stored locally)
-- Dashboard integration via the existing `/metrics` endpoint or a new `/analytics` endpoint
+### v1.3 — Resiliência
+
+- **Redis job store** — replace `/tmp` with Redis to survive restarts and multiple workers
+- **Automatic retry** — retry failed indexing jobs with exponential backoff
+- **Usage analytics** — track questions, latencies, and failures per tenant
 
 ---
 
