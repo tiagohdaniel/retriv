@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     rate_limit_index: str = "10/minute"
     rate_limit_ask: str = "30/minute"
     rate_limit_sources: str = "60/minute"
+    rate_limit_analyze: str = "20/minute"
+
+    # Analytics pipeline
+    analytics_max_rows: int = 100_000
+    analytics_max_file_size_mb: int = 10
 
     # Logging
     log_level: str = "INFO"
@@ -70,7 +75,7 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"
 
-    app_version: str = "1.0.0"
+    app_version: str = "1.2.0"
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

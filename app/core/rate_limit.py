@@ -40,3 +40,4 @@ def _build_limit(settings_attr: str) -> callable:
 index_rate_limit = _build_limit("rate_limit_index")
 ask_rate_limit = _build_limit("rate_limit_ask")
 sources_rate_limit = _build_limit("rate_limit_sources")
+analyze_rate_limit = _build_limit("rate_limit_analyze")

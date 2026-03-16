@@ -14,7 +14,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from app.schemas.models import HealthResponse
 from app.dependencies import get_settings, get_vector_store
 from app.core.vector_store import VectorStoreBase
-from app.api import routes_index, routes_ask, routes_sources
+from app.api import routes_index, routes_ask, routes_sources, routes_analyze
 from app.core.rate_limit import limiter
 from app.core.logging_config import configure_logging_from_settings
 from app.middleware.logging_middleware import RequestLoggingMiddleware
@@ -66,6 +66,7 @@ app.add_middleware(
 app.include_router(routes_index.router, tags=["indexing"])
 app.include_router(routes_ask.router, tags=["search"])
 app.include_router(routes_sources.router, tags=["sources"])
+app.include_router(routes_analyze.router, tags=["analytics"])
 
 def _with_basic_auth(asgi_app):
     """Wrap an ASGI app with Basic auth when METRICS_USERNAME/PASSWORD are set."""
