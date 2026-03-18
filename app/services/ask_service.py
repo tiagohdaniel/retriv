@@ -2,10 +2,12 @@ from app.schemas.models import AskRequest, AskResponse, SourceReference
 from app.core.logging_config import get_logger
 from app.core.metrics import llm_tokens_total, ask_no_context_total
 from app.core.hybrid_search import BM25Searcher, rrf_merge
+from app.core.query_normalizer import QueryNormalizer
 
 logger = get_logger("retriv.ask")
 
 _bm25 = BM25Searcher()
+_normalizer = QueryNormalizer()
 
 
 def _source_distribution(docs: list[dict]) -> dict[str, int]:
@@ -157,7 +159,15 @@ class AskService:
 
     def _retrieve(self, request: AskRequest, tenant_id: str | None) -> list[dict]:
         """Embed → search (hybrid or semantic) → diversity → rerank → top_k docs."""
-        query_embedding = self.embedding.encode([request.question], task="query")[0]
+        retrieval_query, was_normalized = _normalizer.normalize(request.question)
+        if was_normalized:
+            logger.debug(
+                "query_normalized",
+                original=request.question,
+                normalized=retrieval_query,
+            )
+
+        query_embedding = self.embedding.encode([retrieval_query], task="query")[0]
         fetch_k = self._fetch_top_k(request.top_k)
 
         if self.hybrid_enabled:
@@ -167,7 +177,7 @@ class AskService:
                     source_ids=request.source_ids,
                     limit=self.hybrid_corpus_limit,
                 )
-                bm25_docs = _bm25.search(query=request.question, corpus=corpus, top_k=fetch_k)
+                bm25_docs = _bm25.search(query=retrieval_query, corpus=corpus, top_k=fetch_k)
             except Exception as e:
                 logger.warning("hybrid_bm25_fallback", error=str(e))
                 bm25_docs = []
