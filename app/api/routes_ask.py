@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from app.schemas.models import AskRequest, AskResponse
-from app.dependencies import get_embedding_service, get_vector_store, get_llm_client, get_observability, get_reranker, get_settings
+from app.dependencies import get_embedding_service, get_vector_store, get_llm_client, get_observability, get_reranker, get_settings, get_query_normalizer
 from app.services.ask_service import AskService
 from app.core.auth import verify_api_key
 from app.core.rate_limit import limiter, ask_rate_limit
@@ -24,6 +24,7 @@ async def ask_question(
     llm_client=Depends(get_llm_client),
     observability=Depends(get_observability),
     reranker=Depends(get_reranker),
+    query_normalizer=Depends(get_query_normalizer),
     settings=Depends(get_settings),
 ):
     """Ask a natural language question over indexed documents.
@@ -43,6 +44,7 @@ async def ask_question(
         source_diversity_enabled=settings.source_diversity_enabled,
         source_diversity_max_per_source=settings.source_diversity_max_per_source,
         neighbor_expansion_enabled=settings.neighbor_expansion_enabled,
+        query_normalizer=query_normalizer,
     )
     return await service.ask(body, background_tasks=background_tasks, tenant_id=tenant_id)
 
@@ -58,6 +60,7 @@ async def ask_question_stream(
     llm_client=Depends(get_llm_client),
     observability=Depends(get_observability),
     reranker=Depends(get_reranker),
+    query_normalizer=Depends(get_query_normalizer),
     settings=Depends(get_settings),
 ):
     service = AskService(
@@ -72,6 +75,7 @@ async def ask_question_stream(
         source_diversity_enabled=settings.source_diversity_enabled,
         source_diversity_max_per_source=settings.source_diversity_max_per_source,
         neighbor_expansion_enabled=settings.neighbor_expansion_enabled,
+        query_normalizer=query_normalizer,
     )
 
     async def event_stream():

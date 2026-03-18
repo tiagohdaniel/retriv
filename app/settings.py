@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     # Prevents split sentences/sections from landing in separate LLM context windows
     neighbor_expansion_enabled: bool = False
 
+    # Query normalization domain — selects vocabulary normalizer for retrieval
+    # Options: "fiscal" (legal/fiscal PT), "none" (disabled)
+    query_normalizer_domain: str = "fiscal"
+
     # RAG evaluation — disabled by default (requires Langfuse account)
     eval_enabled: bool = False
     eval_model: str = "claude-haiku-4-5-20251001"  # lightweight model for LLM-as-judge
