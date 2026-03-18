@@ -29,7 +29,7 @@ class IndexService:
 
         embeddings: list[list[float]] = []
         for i in range(0, len(chunks), _EMBED_BATCH_SIZE):
-            embeddings.extend(self.embedding.encode(chunks[i : i + _EMBED_BATCH_SIZE]))
+            embeddings.extend(self.embedding.encode(chunks[i : i + _EMBED_BATCH_SIZE], task="document"))
 
         self.vector_store.upsert_chunks(
             source_id=request.source_id,

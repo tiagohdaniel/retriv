@@ -157,7 +157,7 @@ class AskService:
 
     def _retrieve(self, request: AskRequest, tenant_id: str | None) -> list[dict]:
         """Embed → search (hybrid or semantic) → diversity → rerank → top_k docs."""
-        query_embedding = self.embedding.encode([request.question])[0]
+        query_embedding = self.embedding.encode([request.question], task="query")[0]
         fetch_k = self._fetch_top_k(request.top_k)
 
         if self.hybrid_enabled:
