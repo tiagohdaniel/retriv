@@ -16,7 +16,7 @@ _RULES: list[tuple[re.Pattern, str]] = [
     (re.compile(r'\banualmente\b', re.IGNORECASE), 'no ano-calendário'),
 
     # --- Legal entity types ---
-    (re.compile(r'\bmicroempresa\b', re.IGNORECASE), 'microempresa ME'),
+    (re.compile(r'\bmicro\s*empresa\b', re.IGNORECASE), 'microempresa ME'),
     (re.compile(r'\bpequena empresa\b', re.IGNORECASE), 'empresa de pequeno porte EPP'),
     (re.compile(r'\bempresa de pequeno porte(?!\s+EPP)\b', re.IGNORECASE), 'empresa de pequeno porte EPP'),
 ]
