@@ -1,6 +1,6 @@
 from app.schemas.models import AskRequest, AskResponse, SourceReference
 from app.core.logging_config import get_logger
-from app.core.metrics import llm_tokens_total, ask_no_context_total
+from app.core.metrics import llm_tokens_total, ask_no_context_total, hyde_tokens_total
 from app.core.hybrid_search import BM25Searcher, rrf_merge
 from app.core.query_normalizer import QueryNormalizerBase, get_normalizer
 
@@ -35,6 +35,8 @@ class AskService:
         source_diversity_max_per_source: int = 3,
         neighbor_expansion_enabled: bool = False,
         query_normalizer: QueryNormalizerBase | None = None,
+        hyde_enabled: bool = False,
+        hyde_model: str = "claude-haiku-4-5-20251001",
     ):
         self.embedding = embedding_service
         self.vector_store = vector_store
@@ -48,6 +50,8 @@ class AskService:
         self.source_diversity_max_per_source = source_diversity_max_per_source
         self.neighbor_expansion_enabled = neighbor_expansion_enabled
         self._normalizer = query_normalizer if query_normalizer is not None else get_normalizer("none")
+        self.hyde_enabled = hyde_enabled
+        self.hyde_model = hyde_model
 
     # ------------------------------------------------------------------
     # Public API
@@ -59,7 +63,8 @@ class AskService:
         background_tasks=None,
         tenant_id: str | None = None,
     ) -> AskResponse:
-        docs = self._retrieve(request, tenant_id)
+        retrieval_query = await self._hyde_query(request.question) if self.hyde_enabled else None
+        docs = self._retrieve(request, tenant_id, retrieval_query=retrieval_query)
 
         if not docs:
             ask_no_context_total.inc()
@@ -108,7 +113,8 @@ class AskService:
         )
 
     async def ask_stream(self, request: AskRequest, tenant_id: str | None = None):
-        docs = self._retrieve(request, tenant_id)
+        retrieval_query = await self._hyde_query(request.question) if self.hyde_enabled else None
+        docs = self._retrieve(request, tenant_id, retrieval_query=retrieval_query)
 
         if not docs:
             ask_no_context_total.inc()
@@ -158,8 +164,43 @@ class AskService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _retrieve(self, request: AskRequest, tenant_id: str | None) -> list[dict]:
-        """Embed → search (hybrid or semantic) → diversity → rerank → top_k docs."""
+    async def _hyde_query(self, question: str) -> str:
+        """Generate a hypothetical document passage for HyDE retrieval.
+
+        Asks the LLM to write a short technical passage that would answer the question.
+        The passage naturally uses the same vocabulary as the indexed documents,
+        closing the vocabulary gap without domain-specific rules.
+        Falls back to the original question on any error.
+        """
+        prompt = (
+            "Escreva um trecho hipotético de 1-2 frases de um documento técnico que conteria "
+            "a resposta para a pergunta abaixo. Use o vocabulário técnico preciso do domínio. "
+            "Não invente valores numéricos, datas ou nomes específicos.\n\n"
+            f"Pergunta: {question}\n\nTrecho hipotético:"
+        )
+        try:
+            # system="" bypasses the RAG system prompt — HyDE needs free generation
+            result = await self.llm.generate(
+                prompt=prompt,
+                max_tokens=150,
+                model_override=self.hyde_model,
+                system="",
+            )
+            hypothesis = result.get("answer", "").strip()
+            tokens = result.get("tokens_used", 0)
+            hyde_tokens_total.labels(model=self.hyde_model).inc(tokens)
+            logger.debug("hyde_generated", original=question, hypothesis=hypothesis, tokens=tokens)
+            return hypothesis or question
+        except Exception as e:
+            logger.warning("hyde_fallback", error=str(e))
+            return question
+
+    def _retrieve(self, request: AskRequest, tenant_id: str | None, retrieval_query: str | None = None) -> list[dict]:
+        """Embed → search (hybrid or semantic) → diversity → rerank → top_k docs.
+
+        retrieval_query: if provided (e.g. from HyDE), used for embedding instead of
+        the normalized question. The original question is still used for reranking.
+        """
         norm = self._normalizer.normalize(request.question)
         if norm.was_changed:
             logger.debug(
@@ -168,9 +209,10 @@ class AskService:
                 normalized=norm.normalized,
                 rules=norm.rules_applied,
             )
-        retrieval_query = norm.normalized
 
-        query_embedding = self.embedding.encode([retrieval_query], task="query")[0]
+        # HyDE takes priority; otherwise use normalized question
+        embedding_text = retrieval_query if retrieval_query is not None else norm.normalized
+        query_embedding = self.embedding.encode([embedding_text], task="query")[0]
         fetch_k = self._fetch_top_k(request.top_k)
 
         if self.hybrid_enabled:

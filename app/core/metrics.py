@@ -47,3 +47,9 @@ analytics_errors_total = Counter(
     "Total errors in the analytics pipeline",
     ["reason"],
 )
+
+hyde_tokens_total = Counter(
+    "retriv_hyde_tokens_total",
+    "Total LLM tokens consumed by HyDE hypothesis generation",
+    ["model"],
+)

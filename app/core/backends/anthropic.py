@@ -22,18 +22,28 @@ class AnthropicClient(LLMClientBase):
         self.model = model
         self.client = AsyncAnthropic(api_key=api_key, timeout=timeout)
 
-    async def generate(self, prompt: str, max_tokens: int = 1000) -> dict:
-        message = await self.client.messages.create(
-            model=self.model,
+    async def generate(
+        self,
+        prompt: str,
+        max_tokens: int = 1000,
+        model_override: str | None = None,
+        system: str | None = None,
+    ) -> dict:
+        model = model_override or self.model
+        system_prompt = system if system is not None else _SYSTEM_PROMPT
+        kwargs = dict(
+            model=model,
             max_tokens=max_tokens,
             temperature=0,
-            system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
+        if system_prompt:
+            kwargs["system"] = system_prompt
+        message = await self.client.messages.create(**kwargs)
         return {
             "answer": message.content[0].text,
             "tokens_used": message.usage.input_tokens + message.usage.output_tokens,
-            "model": self.model,
+            "model": model,
         }
 
     async def stream(self, prompt: str, max_tokens: int = 1000):
