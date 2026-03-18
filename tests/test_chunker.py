@@ -78,6 +78,34 @@ def test_semantic_returns_all_content():
         assert word in combined, f"Word '{word}' was dropped"
 
 
+def test_semantic_section_header_forces_new_chunk():
+    """Numbered section headers must never be merged with preceding content,
+    even when the combined size would fit within chunk_size.
+    Reproduces the real case from guia-pgdas-d.pdf where '1.4. QUANDO UTILIZAR'
+    and '1.5. CONCEITOS PRELIMINARES' were merged into one chunk, causing the
+    ME limit (R$ 360.000,00) to be in a different chunk than 'Microempresa'.
+    """
+    text = (
+        "1.4. QUANDO UTILIZAR\n\n"
+        "A declaração e o recolhimento devem ser efetuados até o dia 20 do mês.\n\n"
+        "1.5. CONCEITOS PRELIMINARES\n\n"
+        "Microempresa (ME) — receita bruta igual ou inferior a R$ 360.000,00."
+    )
+    c = SemanticChunker(chunk_size=800, chunk_overlap=0)
+    chunks = c.chunk(text)
+
+    # 1.4 and 1.5 must be in separate chunks
+    chunk_with_14 = next((ch for ch in chunks if "1.4." in ch), None)
+    chunk_with_15 = next((ch for ch in chunks if "1.5." in ch), None)
+    assert chunk_with_14 is not None, "Section 1.4 not found in any chunk"
+    assert chunk_with_15 is not None, "Section 1.5 not found in any chunk"
+    assert chunk_with_14 is not chunk_with_15, "Sections 1.4 and 1.5 must be in separate chunks"
+
+    # The ME definition and its limit must be in the same chunk
+    assert "Microempresa" in chunk_with_15
+    assert "360.000,00" in chunk_with_15
+
+
 # ---------------------------------------------------------------------------
 # TextChunker (regression — must still work)
 # ---------------------------------------------------------------------------
