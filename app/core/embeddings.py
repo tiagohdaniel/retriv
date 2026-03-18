@@ -3,6 +3,14 @@ import hashlib
 EMBEDDING_DIM = 768  # nomic-embed-text-v1.5 output dimensions
 
 
+_TASK_PREFIXES = {
+    "document": "search_document: ",
+    "query": "search_query: ",
+}
+
+_PREFIX_MODELS = {"nomic-ai/nomic-embed-text-v1.5"}
+
+
 class FastEmbedEmbedding:
     """Primary embedding via fastembed (ONNX Runtime, no PyTorch).
 
@@ -10,20 +18,22 @@ class FastEmbedEmbedding:
     tokenization, mean pooling, and L2 normalization internally.
     Designed specifically for production RAG stacks.
 
-    Supports nomic-embed-text-v1.5 natively. The model optionally uses
-    instruction prefixes for best quality:
+    Supports nomic-embed-text-v1.5 natively. The model uses instruction
+    prefixes for best quality:
       - documents: "search_document: " + text
       - queries:   "search_query: " + text
-    Prefix injection requires task-type awareness in encode() — deferred to
-    feat/embedding-task-types. Without prefixes the model still significantly
-    outperforms all-MiniLM-L6-v2.
+    Pass task="document" when indexing, task="query" when searching.
     """
 
     def __init__(self, model_name: str) -> None:
         from fastembed import TextEmbedding
         self.model = TextEmbedding(model_name=model_name)
+        self._use_prefixes = model_name in _PREFIX_MODELS
 
-    def encode(self, texts: list[str]) -> list[list[float]]:
+    def encode(self, texts: list[str], task: str = "document") -> list[list[float]]:
+        if self._use_prefixes:
+            prefix = _TASK_PREFIXES.get(task, "")
+            texts = [prefix + t for t in texts]
         return [emb.tolist() for emb in self.model.embed(texts)]
 
 
@@ -40,7 +50,7 @@ class ONNXEmbedding:
         from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
         self._ef = ONNXMiniLM_L6_V2()
 
-    def encode(self, texts: list[str]) -> list[list[float]]:
+    def encode(self, texts: list[str], task: str = "document") -> list[list[float]]:
         results = self._ef(list(texts))
         return [r.tolist() if hasattr(r, "tolist") else list(r) for r in results]
 
@@ -52,7 +62,7 @@ class HashEmbedding:
     Vectors are reproducible but NOT semantically meaningful.
     """
 
-    def encode(self, texts: list[str]) -> list[list[float]]:
+    def encode(self, texts: list[str], task: str = "document") -> list[list[float]]:
         return [self._hash_to_vector(t) for t in texts]
 
     def _hash_to_vector(self, text: str) -> list[float]:
