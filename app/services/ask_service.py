@@ -173,9 +173,9 @@ class AskService:
         Falls back to the original question on any error.
         """
         prompt = (
-            "Escreva um trecho hipotético de 1-2 frases de um documento técnico que conteria "
-            "a resposta para a pergunta abaixo. Use o vocabulário técnico preciso do domínio. "
-            "Não invente valores numéricos, datas ou nomes específicos.\n\n"
+            "Escreva um trecho hipotético de 1-2 frases como apareceria num manual, guia ou "
+            "regulamento técnico, respondendo diretamente a pergunta abaixo. Use vocabulário "
+            "técnico preciso — siglas, termos oficiais e valores estimados são bem-vindos.\n\n"
             f"Pergunta: {question}\n\nTrecho hipotético:"
         )
         try:
