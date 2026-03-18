@@ -38,11 +38,14 @@ class SemanticChunker:
     Strategy:
     1. Split text at paragraph boundaries (double newlines, markdown headers).
     2. Paragraphs larger than chunk_size are broken further at sentence boundaries.
-    3. Short units are merged greedily until the next one would exceed chunk_size.
-    4. Overlap is applied by carrying the last unit of each chunk into the next.
+    3. Units still exceeding chunk_size (e.g. table rows without punctuation) are
+       hard-split at word boundaries as a last resort — chunk_size is a hard upper bound.
+    4. Short units are merged greedily until the next one would exceed chunk_size.
+    5. Overlap is applied by carrying the last unit of each chunk into the next.
 
     This avoids cutting sentences in the middle, preserving semantic coherence.
-    chunk_size is a soft limit — a single sentence that exceeds it becomes its own chunk.
+    No chunk will ever exceed chunk_size characters, preventing OOM in downstream
+    embedding models when processing tabular PDFs or other non-prose content.
     """
 
     def __init__(self, chunk_size: int = 800, chunk_overlap: int = 100):
@@ -67,14 +70,43 @@ class SemanticChunker:
         return sentences if sentences else [text.strip()]
 
     def _units_from(self, paragraphs: list[str]) -> list[str]:
-        """Break oversized paragraphs into sentence-level units."""
+        """Break oversized paragraphs into sentence-level units.
+
+        Falls back to hard word-boundary splitting for content without sentence
+        endings (e.g. table rows, legal codes, tabular PDFs). This guarantees
+        every unit is at most chunk_size characters, preventing OOM in the
+        embedding model.
+        """
         units: list[str] = []
         for para in paragraphs:
             if len(para) <= self.chunk_size:
                 units.append(para)
             else:
-                units.extend(self._split_sentences(para))
+                for sentence in self._split_sentences(para):
+                    if len(sentence) <= self.chunk_size:
+                        units.append(sentence)
+                    else:
+                        units.extend(self._hard_split(sentence))
         return units
+
+    def _hard_split(self, text: str) -> list[str]:
+        """Split text that has no natural boundaries at word boundaries.
+
+        Last-resort fallback for tabular/code content where neither paragraph
+        nor sentence splitting produces units within chunk_size. Splits at the
+        last space before chunk_size, falling back to a hard character cut if
+        no space is found in the second half of the window.
+        """
+        parts: list[str] = []
+        while len(text) > self.chunk_size:
+            boundary = text[: self.chunk_size].rfind(" ")
+            if boundary < self.chunk_size // 2:
+                boundary = self.chunk_size  # no good word boundary — hard cut
+            parts.append(text[:boundary].strip())
+            text = text[boundary:].strip()
+        if text:
+            parts.append(text)
+        return parts
 
     def _overlap_prefix(self, current_parts: list[str]) -> list[str]:
         """Return the tail of current_parts to carry into the next chunk as overlap."""
