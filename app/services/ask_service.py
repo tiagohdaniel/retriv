@@ -210,9 +210,13 @@ class AskService:
                 rules=norm.rules_applied,
             )
 
-        # HyDE takes priority; otherwise use normalized question
-        embedding_text = retrieval_query if retrieval_query is not None else norm.normalized
-        query_embedding = self.embedding.encode([embedding_text], task="query")[0]
+        # HyDE: hypothesis is a synthetic document passage → embed as "document"
+        # (same prefix space as indexed chunks, not the "query" prefix space)
+        # No HyDE: embed normalized question as "query"
+        if retrieval_query is not None:
+            query_embedding = self.embedding.encode([retrieval_query], task="document")[0]
+        else:
+            query_embedding = self.embedding.encode([norm.normalized], task="query")[0]
         fetch_k = self._fetch_top_k(request.top_k)
 
         if self.hybrid_enabled:
