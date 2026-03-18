@@ -42,6 +42,7 @@ async def ask_question(
         hybrid_corpus_limit=settings.hybrid_bm25_corpus_limit,
         source_diversity_enabled=settings.source_diversity_enabled,
         source_diversity_max_per_source=settings.source_diversity_max_per_source,
+        neighbor_expansion_enabled=settings.neighbor_expansion_enabled,
     )
     return await service.ask(body, background_tasks=background_tasks, tenant_id=tenant_id)
 
@@ -70,6 +71,7 @@ async def ask_question_stream(
         hybrid_corpus_limit=settings.hybrid_bm25_corpus_limit,
         source_diversity_enabled=settings.source_diversity_enabled,
         source_diversity_max_per_source=settings.source_diversity_max_per_source,
+        neighbor_expansion_enabled=settings.neighbor_expansion_enabled,
     )
 
     async def event_stream():

@@ -154,6 +154,20 @@ class ChromaVectorStore(VectorStoreBase):
             )
         ]
 
+    def fetch_by_ids(self, ids: list[str]) -> list[dict]:
+        if not ids:
+            return []
+        result = self.collection.get(
+            ids=ids,
+            include=["documents", "metadatas"],
+        )
+        return [
+            {"id": doc_id, "document": doc, "metadata": meta}
+            for doc_id, doc, meta in zip(
+                result["ids"], result["documents"], result["metadatas"]
+            )
+        ]
+
     def ping(self) -> None:
         self.collection.count()
 

@@ -32,6 +32,7 @@ class AskService:
         hybrid_corpus_limit: int = 500,
         source_diversity_enabled: bool = False,
         source_diversity_max_per_source: int = 3,
+        neighbor_expansion_enabled: bool = False,
     ):
         self.embedding = embedding_service
         self.vector_store = vector_store
@@ -43,6 +44,7 @@ class AskService:
         self.hybrid_corpus_limit = hybrid_corpus_limit
         self.source_diversity_enabled = source_diversity_enabled
         self.source_diversity_max_per_source = source_diversity_max_per_source
+        self.neighbor_expansion_enabled = neighbor_expansion_enabled
 
     # ------------------------------------------------------------------
     # Public API
@@ -201,6 +203,15 @@ class AskService:
             docs = self.reranker.rerank(request.question, docs)[:request.top_k]
             logger.debug("rerank_output", count=len(docs))
 
+        if self.neighbor_expansion_enabled and docs:
+            pre_expansion = len(docs)
+            docs = self._expand_neighbors(docs, tenant_id)
+            logger.debug(
+                "neighbor_expansion_applied",
+                pre=pre_expansion,
+                post=len(docs),
+            )
+
         return docs
 
     def _fetch_top_k(self, requested_top_k: int) -> int:
@@ -209,6 +220,38 @@ class AskService:
         if self.reranker and not isinstance(self.reranker, NullReranker):
             return max(self.reranker_top_k_fetch, requested_top_k)
         return requested_top_k
+
+    def _expand_neighbors(self, docs: list[dict], tenant_id: str | None) -> list[dict]:
+        """Add chunk_index ± 1 from the same source_id for each retrieved doc.
+
+        Uses chunk_index and source_id from metadata to construct neighbor IDs.
+        Neighbors that do not exist in the store are silently skipped.
+        The result is sorted by (source_id, chunk_index) so adjacent chunks
+        appear together in the LLM context window.
+        """
+        existing_ids: set[str] = {doc["id"] for doc in docs}
+        neighbor_ids: list[str] = []
+
+        for doc in docs:
+            meta = doc.get("metadata", {})
+            source_id = meta.get("source_id")
+            chunk_index = meta.get("chunk_index")
+            if source_id is None or chunk_index is None:
+                continue
+            prefix = f"{tenant_id}__{source_id}" if tenant_id else source_id
+            for delta in (-1, 1):
+                nid = f"{prefix}__chunk_{chunk_index + delta}"
+                if nid not in existing_ids:
+                    neighbor_ids.append(nid)
+                    existing_ids.add(nid)
+
+        neighbors = self.vector_store.fetch_by_ids(neighbor_ids)
+        all_docs = docs + neighbors
+        all_docs.sort(key=lambda d: (
+            d.get("metadata", {}).get("source_id", ""),
+            d.get("metadata", {}).get("chunk_index", 0),
+        ))
+        return all_docs
 
     def _apply_source_diversity(self, docs: list[dict], max_per_source: int) -> list[dict]:
         """Cap how many chunks from the same source_id appear in the pool.

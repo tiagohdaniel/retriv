@@ -69,6 +69,15 @@ class VectorStoreBase(ABC):
         ...
 
     @abstractmethod
+    def fetch_by_ids(self, ids: list[str]) -> list[dict]:
+        """Fetch specific chunks by their IDs.
+
+        Returns only IDs that exist — silently skips unknown IDs.
+        Used by neighbor chunk expansion to retrieve adjacent chunks.
+        """
+        ...
+
+    @abstractmethod
     def ping(self) -> None:
         """Verifica conectividade com o backend. Lança exceção se indisponível."""
         ...

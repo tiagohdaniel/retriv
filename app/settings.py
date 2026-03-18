@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     source_diversity_enabled: bool = False
     source_diversity_max_per_source: int = 3  # max chunks from the same source_id in pool
 
+    # Neighbor expansion — include adjacent chunks (index ± 1) from the same source
+    # Prevents split sentences/sections from landing in separate LLM context windows
+    neighbor_expansion_enabled: bool = False
+
     # RAG evaluation — disabled by default (requires Langfuse account)
     eval_enabled: bool = False
     eval_model: str = "claude-haiku-4-5-20251001"  # lightweight model for LLM-as-judge
