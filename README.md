@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.11-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)
-![Tests](https://img.shields.io/badge/tests-71%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-77%20passed-brightgreen)
 ![CI](https://github.com/tiagohdaniel/retriv/actions/workflows/ci.yml/badge.svg)
 ![Docker](https://img.shields.io/badge/docker-ready-2496ED)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -42,7 +42,7 @@ POST /index                          POST /ask
      │                                    │
      ▼                                    ▼
 SemanticChunker                  query → EmbeddingService
-(paragraphs → merge up to 800ch)  (nomic-embed-text-v1.5)
+(paragraphs → sentence units)    (nomic-embed-text-v1.5)
      │                                    │
      ▼                              ┌─────┴──────────────────┐
 EmbeddingService                   │                        │
@@ -55,6 +55,11 @@ VectorStore upsert                 └─────────┬────
                                              │
                                              ▼
                                     Filter max_distance
+                                             │
+                                       [optional]
+                                             ▼
+                                  Source diversity cap
+                                  (max N chunks per source_id)
                                              │
                                              ▼
                                 Guard: no chunks? → skip LLM
@@ -185,15 +190,19 @@ Runs embedded (local dev) or in server mode (production via docker-compose). The
 
 ---
 
-### Chunking: semantic, 800 chars, 100 overlap
+### Chunking: semantic, 400 chars, strategy-C overlap
 
-The default chunker splits text by paragraph boundaries (double newlines), merges small paragraphs greedily up to 800 characters, and carries a tail overlap of ~100 characters into the next chunk to avoid cutting context at boundaries. Oversized paragraphs are split at sentence boundaries.
+The default chunker splits text at paragraph boundaries (double newlines), breaks oversized paragraphs at sentence boundaries, and merges short units greedily up to `CHUNK_SIZE` characters.
+
+**Overlap (Strategy C):** The last complete semantic unit (sentence or paragraph) is always carried into the next chunk as overlap — never truncated to a raw character suffix. If the budget (`CHUNK_OVERLAP`) allows it, additional units are prepended working backwards. This ensures the overlap is always a grammatically complete sentence, which embeds and reads correctly. Content produced by `_hard_split` (tables, legal enumerations, PDFs without punctuation) receives a char-suffix fallback instead.
+
+**Section header detection:** Numbered headings (`1.5. CONCEITOS`, `2.3.1. DEFINIÇÃO`) are recognised as hard boundaries and always start a new chunk, regardless of available space. This prevents section titles from being silently merged with the preceding section's content — a common failure mode in legal and government PDFs.
 
 - **Semantic vs fixed:** Fixed chunking cuts every N characters regardless of content. Semantic chunking respects paragraph and sentence boundaries, keeping related sentences together and improving retrieval precision.
-- **800 chars:** ~3-6 sentences per chunk. Large enough to carry context, specific enough to score well on single-topic queries.
-- **100 char overlap:** Ensures content at paragraph boundaries appears in both adjacent chunks.
+- **400 chars:** ~2-4 sentences per chunk. Smaller chunks score better on focused single-fact queries (e.g. a legal limit or a specific figure). Increase to 600-800 for documents with long paragraphs.
+- **Strategy-C overlap:** Carries the full last sentence (even if > `CHUNK_OVERLAP` budget) so that boundary content is semantically complete in both the ending chunk and the beginning of the next.
 
-Set `CHUNKING_STRATEGY=fixed` to revert to character-based splitting.
+Set `CHUNKING_STRATEGY=fixed` to revert to character-based sliding-window splitting.
 
 ---
 
@@ -218,11 +227,21 @@ Documents appearing in both lists get boosted. BM25 complements semantic search 
 
 ### Cross-encoder reranker (optional)
 
-When `RERANKER_ENABLED=true`, after retrieving `RERANKER_TOP_K_FETCH` candidates (default 15), each `(query, document)` pair is scored independently by a cross-encoder (`BAAI/bge-reranker-base` — multilingual). The top `RERANKER_TOP_N` are kept and sent to the LLM.
+When `RERANKER_ENABLED=true`, after retrieving `RERANKER_TOP_K_FETCH` candidates (default 30), each `(query, document)` pair is scored independently by a cross-encoder (`BAAI/bge-reranker-base` — multilingual). The top `RERANKER_TOP_N` are kept and sent to the LLM.
 
 **Why cross-encoder over bi-encoder for reranking:** Bi-encoders (embedding models) compress query and document independently — they cannot model their interaction directly. Cross-encoders see both texts together, producing more accurate relevance scores at the cost of higher latency. This is why reranking is a second pass, not the primary retrieval step.
 
 Model download happens once on first use. Set `RERANKER_ENABLED=false` to skip entirely (zero overhead).
+
+---
+
+### Source diversity cap (optional)
+
+When `SOURCE_DIVERSITY_ENABLED=true`, after retrieval (and before reranking), the candidate pool is filtered to at most `SOURCE_DIVERSITY_MAX_PER_SOURCE` chunks per `source_id`. This prevents a single large document from dominating the top-k results and crowding out context from other sources.
+
+**When this matters:** If a tenant has one very large document (e.g. a 300-page reference guide with 800 chunks) and several smaller ones, a query likely to match the large document will fill all top-k slots with chunks from it alone, potentially missing a more precise answer from a smaller source.
+
+The filter preserves ranking order — the first N chunks per source_id by rank are kept, the rest are dropped. The reranker then selects the final top-k from this diverse pool.
 
 ---
 
@@ -448,25 +467,30 @@ docker-compose.yml
 |----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | *(required)* | Anthropic API key |
 | `LLM_BACKEND` | `anthropic` | LLM provider (`anthropic` — others future) |
-| `MODEL_NAME` | `claude-sonnet-4-20250514` | Claude model for answer generation |
+| `MODEL_NAME` | `claude-sonnet-4-6` | Claude model for answer generation |
 | `LLM_TIMEOUT` | `30.0` | LLM request timeout in seconds |
 | `EMBEDDING_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | Embedding model (⚠️ reindex required on change) |
 | `API_AUTH_ENABLED` | `false` | Enable API key authentication |
 | `API_KEY` | *(empty)* | API key for single-tenant auth |
 | `API_KEYS` | *(empty)* | Multi-tenant keys: `key1:tenant1,key2:tenant2` |
-| `CHROMA_MODE` | `embedded` | `embedded` (local) or `server` (production) |
+| `CHROMA_MODE` | `embedded` | `embedded` (local), `server` (docker-compose), or `cloud` (Chroma Cloud) |
 | `CHROMA_PERSIST_DIR` | `./chroma_data` | Path for embedded mode |
 | `CHROMA_HOST` | `localhost` | ChromaDB server host |
 | `CHROMA_PORT` | `8000` | ChromaDB server port |
-| `CHUNKING_STRATEGY` | `semantic` | `semantic` (paragraph-aware) or `fixed` (character-based) |
+| `CHROMA_CLOUD_API_KEY` | *(empty)* | Chroma Cloud API key (required when `CHROMA_MODE=cloud`) |
+| `CHROMA_CLOUD_TENANT` | *(empty)* | Chroma Cloud tenant (required when `CHROMA_MODE=cloud`) |
+| `CHROMA_CLOUD_DATABASE` | *(empty)* | Chroma Cloud database (required when `CHROMA_MODE=cloud`) |
+| `CHUNKING_STRATEGY` | `semantic` | `semantic` (paragraph/sentence-aware) or `fixed` (character-based sliding window) |
 | `CHUNK_SIZE` | `800` | Target characters per chunk |
-| `CHUNK_OVERLAP` | `100` | Overlap between adjacent chunks |
-| `HYBRID_ENABLED` | `false` | Enable BM25 + semantic hybrid search with RRF |
+| `CHUNK_OVERLAP` | `100` | Overlap budget in characters — Strategy C carries complete sentences up to this budget |
+| `HYBRID_ENABLED` | `false` | Enable BM25 + semantic hybrid search with RRF merge |
 | `HYBRID_BM25_CORPUS_LIMIT` | `200` | Max chunks loaded into BM25 corpus (≤ 200 for Chroma Cloud) |
 | `RERANKER_ENABLED` | `false` | Enable cross-encoder reranking after retrieval |
-| `RERANKER_MODEL` | `BAAI/bge-reranker-base` | Cross-encoder model (multilingual) |
-| `RERANKER_TOP_K_FETCH` | `15` | Candidates retrieved before reranking |
+| `RERANKER_MODEL` | `BAAI/bge-reranker-base` | Cross-encoder model (multilingual; alt: `Xenova/ms-marco-MiniLM-L-6-v2`) |
+| `RERANKER_TOP_K_FETCH` | `15` | Candidates retrieved before reranking (increase to 30 for denser corpora) |
 | `RERANKER_TOP_N` | `5` | Candidates kept after reranking (sent to LLM) |
+| `SOURCE_DIVERSITY_ENABLED` | `false` | Cap chunks per source in retrieval pool |
+| `SOURCE_DIVERSITY_MAX_PER_SOURCE` | `3` | Max chunks from the same `source_id` in the retrieval pool |
 | `ANALYTICS_MAX_ROWS` | `100000` | Max rows allowed in uploaded datasets |
 | `ANALYTICS_MAX_FILE_SIZE_MB` | `10` | Max file size for `POST /analyze` (MB) |
 | `RATE_LIMIT_ENABLED` | `false` | Enable per-endpoint rate limiting |
@@ -479,6 +503,8 @@ docker-compose.yml
 | `CORS_ORIGINS` | `*` | Allowed origins (comma-separated or `*`) |
 | `WEB_CONCURRENCY` | `2` | Number of Gunicorn worker processes |
 | `METRICS_ENABLED` | `true` | Expose `GET /metrics` in Prometheus format |
+| `METRICS_USERNAME` | *(empty)* | Basic auth username for `/metrics` (leave empty to disable auth) |
+| `METRICS_PASSWORD` | *(empty)* | Basic auth password for `/metrics` |
 | `EVAL_ENABLED` | `false` | Enable async RAG quality evaluation |
 | `EVAL_MODEL` | `claude-haiku-4-5-20251001` | Model used as LLM judge for evaluation |
 | `LANGFUSE_PUBLIC_KEY` | *(empty)* | Langfuse project public key |
@@ -514,6 +540,10 @@ docker-compose.yml
 - **Semantic chunking** — splits at paragraph/sentence boundaries instead of fixed character counts, preserving context
 - **Cross-encoder reranking** — optional second-pass scoring of `(query, doc)` pairs with `BAAI/bge-reranker-base`
 - **BM25 hybrid search** — keyword search merged with semantic via Reciprocal Rank Fusion (RRF)
+- **Section header detection** — numbered headings (`1.5. CONCEITOS`) always start a new chunk, preventing section merges in legal/government PDFs
+- **Strategy-C overlap** — overlap carries complete semantic units (never raw character fragments), preserving sentence integrity at chunk boundaries
+- **Source diversity cap** — optional `SOURCE_DIVERSITY_ENABLED` limits chunks per `source_id` in the retrieval pool, preventing large documents from crowding out smaller sources
+- **Richer Langfuse traces** — `source_distribution` and `hybrid` flags per query for retrieval diagnostics
 
 ### v1.2 — Analytics pipeline ✅ complete
 
