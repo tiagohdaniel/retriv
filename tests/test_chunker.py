@@ -107,6 +107,82 @@ def test_semantic_section_header_forces_new_chunk():
 
 
 # ---------------------------------------------------------------------------
+# SemanticChunker — overlap strategy C (complete semantic units)
+# ---------------------------------------------------------------------------
+
+def test_overlap_carries_complete_sentence_even_when_larger_than_budget():
+    """The last semantic unit must always be carried whole into the next chunk,
+    even when its length exceeds chunk_overlap. The old behaviour truncated to
+    chunk_overlap raw chars — Strategy C must carry the full sentence."""
+    long_s = "A Microempresa tem limite de receita bruta anual de R$ 360.000,00."
+    chunk_overlap = 30
+    chunk_size = 100
+    assert chunk_overlap < len(long_s) < chunk_size  # semantic unit, larger than budget
+
+    # Build text so that long_s ends up as the last unit of a chunk, triggering
+    # the overlap carry for the following chunk.
+    text = "Primeira frase.\n\nSegunda frase.\n\n" + long_s + "\n\nConteúdo seguinte."
+    c = SemanticChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    chunks = c.chunk(text)
+
+    # long_s must appear COMPLETE in the chunk that follows the one where it first
+    # appears (carried as overlap) — not just the last chunk_overlap chars of it.
+    first_idx = next((i for i, ch in enumerate(chunks) if long_s in ch), None)
+    assert first_idx is not None, "long_s not found in any chunk"
+    if first_idx + 1 < len(chunks):
+        assert chunks[first_idx + 1].startswith(long_s), (
+            f"Expected next chunk to start with the full sentence as overlap, "
+            f"got: {repr(chunks[first_idx + 1][:80])}"
+        )
+
+
+def test_overlap_carries_multiple_units_when_budget_allows():
+    """When the last unit is short enough, additional units should be carried
+    backwards until the budget is exhausted."""
+    text = "Sentence one.\n\nSentence two.\n\nSentence three.\n\nSentence four."
+    c = SemanticChunker(chunk_size=40, chunk_overlap=40)
+    chunks = c.chunk(text)
+    assert len(chunks) >= 2
+    # At least one pair of consecutive chunks must share content (overlap visible)
+    shared = any(
+        any(line.strip() in chunks[i + 1] for line in chunks[i].split("\n\n") if line.strip())
+        for i in range(len(chunks) - 1)
+    )
+    assert shared, "No overlap content found between any consecutive chunks"
+
+
+def test_hard_split_units_use_char_suffix_fallback():
+    """Units from _hard_split (no sentence boundaries) receive a char-suffix
+    overlap fallback. The safety guard must prevent the suffix from inflating
+    a subsequent chunk beyond chunk_size."""
+    # Build content with no sentence endings — forces _hard_split on all units.
+    long_word_soup = " ".join(["palavra"] * 90)  # ~630 chars, no punctuation
+    chunk_size = 200
+    chunk_overlap = 50
+    c = SemanticChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    chunks = c.chunk(long_word_soup)
+    # chunk_size is a hard upper bound — no chunk may exceed it.
+    for ch in chunks:
+        assert len(ch) <= chunk_size, f"Chunk exceeded chunk_size: {len(ch)}"
+    # Must produce multiple chunks (content is larger than chunk_size).
+    assert len(chunks) >= 2
+
+
+def test_overlap_zero_disables_carry():
+    """chunk_overlap=0 must produce no overlap between chunks."""
+    text = "First sentence.\n\nSecond sentence.\n\nThird sentence."
+    c = SemanticChunker(chunk_size=30, chunk_overlap=0)
+    chunks = c.chunk(text)
+    if len(chunks) >= 2:
+        # No sentence from chunk N should appear in chunk N+1
+        for i in range(len(chunks) - 1):
+            for part in chunks[i].split("\n\n"):
+                assert part.strip() not in chunks[i + 1], (
+                    f"Unexpected overlap: {repr(part)} found in next chunk"
+                )
+
+
+# ---------------------------------------------------------------------------
 # TextChunker (regression — must still work)
 # ---------------------------------------------------------------------------
 
