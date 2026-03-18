@@ -40,6 +40,8 @@ async def ask_question(
         reranker_top_k_fetch=settings.reranker_top_k_fetch,
         hybrid_enabled=settings.hybrid_enabled,
         hybrid_corpus_limit=settings.hybrid_bm25_corpus_limit,
+        source_diversity_enabled=settings.source_diversity_enabled,
+        source_diversity_max_per_source=settings.source_diversity_max_per_source,
     )
     return await service.ask(body, background_tasks=background_tasks, tenant_id=tenant_id)
 
@@ -66,6 +68,8 @@ async def ask_question_stream(
         reranker_top_k_fetch=settings.reranker_top_k_fetch,
         hybrid_enabled=settings.hybrid_enabled,
         hybrid_corpus_limit=settings.hybrid_bm25_corpus_limit,
+        source_diversity_enabled=settings.source_diversity_enabled,
+        source_diversity_max_per_source=settings.source_diversity_max_per_source,
     )
 
     async def event_stream():
