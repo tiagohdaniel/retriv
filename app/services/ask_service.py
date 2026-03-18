@@ -8,6 +8,15 @@ logger = get_logger("retriv.ask")
 _bm25 = BM25Searcher()
 
 
+def _source_distribution(docs: list[dict]) -> dict[str, int]:
+    """Return {source_id: chunk_count} for the retrieved docs."""
+    counts: dict[str, int] = {}
+    for doc in docs:
+        source_id = doc.get("metadata", {}).get("source_id", "unknown")
+        counts[source_id] = counts.get(source_id, 0) + 1
+    return counts
+
+
 class AskService:
     """Orchestrates the RAG pipeline: embed → retrieve → (rerank) → prompt → LLM."""
 
@@ -21,6 +30,8 @@ class AskService:
         reranker_top_k_fetch: int = 15,
         hybrid_enabled: bool = False,
         hybrid_corpus_limit: int = 500,
+        source_diversity_enabled: bool = False,
+        source_diversity_max_per_source: int = 3,
     ):
         self.embedding = embedding_service
         self.vector_store = vector_store
@@ -30,6 +41,8 @@ class AskService:
         self.reranker_top_k_fetch = reranker_top_k_fetch
         self.hybrid_enabled = hybrid_enabled
         self.hybrid_corpus_limit = hybrid_corpus_limit
+        self.source_diversity_enabled = source_diversity_enabled
+        self.source_diversity_max_per_source = source_diversity_max_per_source
 
     # ------------------------------------------------------------------
     # Public API
@@ -73,7 +86,13 @@ class AskService:
                 question=request.question,
                 contexts=[doc["document"] for doc in docs],
                 answer=result["answer"],
-                metadata={"model": model, "docs_retrieved": len(docs), "tokens_used": tokens},
+                metadata={
+                    "model": model,
+                    "docs_retrieved": len(docs),
+                    "tokens_used": tokens,
+                    "hybrid": self.hybrid_enabled,
+                    "source_distribution": _source_distribution(docs),
+                },
             )
 
         return AskResponse(
@@ -121,7 +140,13 @@ class AskService:
                         question=request.question,
                         contexts=[doc["document"] for doc in docs],
                         answer=full_answer,
-                        metadata={"model": model, "docs_retrieved": len(docs), "tokens_used": tokens},
+                        metadata={
+                            "model": model,
+                            "docs_retrieved": len(docs),
+                            "tokens_used": tokens,
+                            "hybrid": self.hybrid_enabled,
+                            "source_distribution": _source_distribution(docs),
+                        },
                     )
 
     # ------------------------------------------------------------------
@@ -129,7 +154,7 @@ class AskService:
     # ------------------------------------------------------------------
 
     def _retrieve(self, request: AskRequest, tenant_id: str | None) -> list[dict]:
-        """Embed → search (hybrid or semantic) → rerank → top_k docs."""
+        """Embed → search (hybrid or semantic) → diversity → rerank → top_k docs."""
         query_embedding = self.embedding.encode([request.question])[0]
         fetch_k = self._fetch_top_k(request.top_k)
 
@@ -161,8 +186,20 @@ class AskService:
                 tenant_id=tenant_id,
             )
 
+        if self.source_diversity_enabled and docs:
+            pre_diversity = len(docs)
+            docs = self._apply_source_diversity(docs, self.source_diversity_max_per_source)
+            logger.debug(
+                "source_diversity_applied",
+                pre=pre_diversity,
+                post=len(docs),
+                max_per_source=self.source_diversity_max_per_source,
+            )
+
         if docs and self.reranker:
+            logger.debug("rerank_input", count=len(docs))
             docs = self.reranker.rerank(request.question, docs)[:request.top_k]
+            logger.debug("rerank_output", count=len(docs))
 
         return docs
 
@@ -172,6 +209,23 @@ class AskService:
         if self.reranker and not isinstance(self.reranker, NullReranker):
             return max(self.reranker_top_k_fetch, requested_top_k)
         return requested_top_k
+
+    def _apply_source_diversity(self, docs: list[dict], max_per_source: int) -> list[dict]:
+        """Cap how many chunks from the same source_id appear in the pool.
+
+        Preserves ranking order — first N chunks per source are kept, the rest
+        are dropped. This prevents a single large document from dominating the
+        retrieval pool and crowding out relevant context from other sources.
+        """
+        counts: dict[str, int] = {}
+        result = []
+        for doc in docs:
+            source_id = doc.get("metadata", {}).get("source_id", "")
+            count = counts.get(source_id, 0)
+            if count < max_per_source:
+                result.append(doc)
+                counts[source_id] = count + 1
+        return result
 
     def _build_prompt(self, question: str, docs: list[dict], history: list | None = None) -> str:
         context_blocks = []

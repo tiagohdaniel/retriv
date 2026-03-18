@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     reranker_top_k_fetch: int = 15  # how many candidates to retrieve before reranking
     reranker_top_n: int = 5         # how many to keep after reranking (sent to LLM)
 
+    # Source diversity — cap chunks per source in retrieval pool (prevents one doc dominating)
+    source_diversity_enabled: bool = False
+    source_diversity_max_per_source: int = 3  # max chunks from the same source_id in pool
+
     # RAG evaluation — disabled by default (requires Langfuse account)
     eval_enabled: bool = False
     eval_model: str = "claude-haiku-4-5-20251001"  # lightweight model for LLM-as-judge
