@@ -24,6 +24,21 @@ logger = structlog.get_logger(__name__)
 configure_logging_from_settings()
 
 _settings = get_settings()
+
+
+def _maybe_clear_collection() -> None:
+    if os.environ.get("CLEAR_COLLECTION_ON_STARTUP", "").lower() != "true":
+        return
+    try:
+        from app.dependencies import get_chroma_client
+        client = get_chroma_client()
+        client.delete_collection(_settings.chroma_collection)
+        logger.info("collection_cleared", collection=_settings.chroma_collection)
+    except Exception as exc:
+        logger.warning("collection_clear_failed", error=str(exc))
+
+
+_maybe_clear_collection()
 _cors_origins = (
     ["*"]
     if _settings.cors_origins.strip() == "*"
