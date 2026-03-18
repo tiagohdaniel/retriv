@@ -208,11 +208,8 @@ class AskService:
                 max_per_source=self.source_diversity_max_per_source,
             )
 
-        if docs and self.reranker:
-            logger.debug("rerank_input", count=len(docs))
-            docs = self.reranker.rerank(request.question, docs)[:request.top_k]
-            logger.debug("rerank_output", count=len(docs))
-
+        # Expand neighbors before reranking so the cross-encoder evaluates
+        # adjacent chunks alongside candidates — not after the ranking decision.
         if self.neighbor_expansion_enabled and docs:
             pre_expansion = len(docs)
             docs = self._expand_neighbors(docs, tenant_id)
@@ -221,6 +218,16 @@ class AskService:
                 pre=pre_expansion,
                 post=len(docs),
             )
+
+        if docs and self.reranker:
+            logger.debug("rerank_input", count=len(docs))
+            docs = self.reranker.rerank(request.question, docs)[:request.top_k]
+            # Re-sort top-k by document position for coherent LLM context window.
+            docs.sort(key=lambda d: (
+                d.get("metadata", {}).get("source_id", ""),
+                d.get("metadata", {}).get("chunk_index", 0),
+            ))
+            logger.debug("rerank_output", count=len(docs))
 
         return docs
 
