@@ -108,6 +108,15 @@ class SemanticChunker:
             parts.append(text)
         return parts
 
+    def _is_section_header(self, unit: str) -> bool:
+        """Return True if unit starts with a numbered section heading.
+
+        Matches patterns like "1.5. CONCEITOS" or "2.3.1. DEFINIÇÃO" —
+        common in Brazilian government and legal documents. These are strong
+        semantic boundaries that should never be merged with preceding content.
+        """
+        return bool(re.match(r'^\d{1,2}(\.\d{1,2}){1,3}\.?\s+[A-ZÁÉÍÓÚÀÃÕÂÊÔÇ]{2}', unit))
+
     def _overlap_prefix(self, current_parts: list[str]) -> list[str]:
         """Return the tail of current_parts to carry into the next chunk as overlap."""
         if not self.chunk_overlap or not current_parts:
@@ -139,7 +148,10 @@ class SemanticChunker:
             separator_len = 2 if current_parts else 0  # "\n\n" between parts
             proposed_len = current_len + separator_len + len(unit)
 
-            if proposed_len > self.chunk_size and current_parts:
+            # Section headers are hard boundaries — never merge with preceding content
+            force_break = self._is_section_header(unit) and current_parts
+
+            if (proposed_len > self.chunk_size or force_break) and current_parts:
                 # Flush
                 chunks.append("\n\n".join(current_parts))
                 # Seed next chunk with overlap
