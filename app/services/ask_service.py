@@ -2,12 +2,11 @@ from app.schemas.models import AskRequest, AskResponse, SourceReference
 from app.core.logging_config import get_logger
 from app.core.metrics import llm_tokens_total, ask_no_context_total
 from app.core.hybrid_search import BM25Searcher, rrf_merge
-from app.core.query_normalizer import QueryNormalizer
+from app.core.query_normalizer import QueryNormalizerBase, get_normalizer
 
 logger = get_logger("retriv.ask")
 
 _bm25 = BM25Searcher()
-_normalizer = QueryNormalizer()
 
 
 def _source_distribution(docs: list[dict]) -> dict[str, int]:
@@ -35,6 +34,7 @@ class AskService:
         source_diversity_enabled: bool = False,
         source_diversity_max_per_source: int = 3,
         neighbor_expansion_enabled: bool = False,
+        query_normalizer: QueryNormalizerBase | None = None,
     ):
         self.embedding = embedding_service
         self.vector_store = vector_store
@@ -47,6 +47,7 @@ class AskService:
         self.source_diversity_enabled = source_diversity_enabled
         self.source_diversity_max_per_source = source_diversity_max_per_source
         self.neighbor_expansion_enabled = neighbor_expansion_enabled
+        self._normalizer = query_normalizer if query_normalizer is not None else get_normalizer("none")
 
     # ------------------------------------------------------------------
     # Public API
@@ -159,13 +160,15 @@ class AskService:
 
     def _retrieve(self, request: AskRequest, tenant_id: str | None) -> list[dict]:
         """Embed → search (hybrid or semantic) → diversity → rerank → top_k docs."""
-        retrieval_query, was_normalized = _normalizer.normalize(request.question)
-        if was_normalized:
+        norm = self._normalizer.normalize(request.question)
+        if norm.was_changed:
             logger.debug(
                 "query_normalized",
-                original=request.question,
-                normalized=retrieval_query,
+                original=norm.original,
+                normalized=norm.normalized,
+                rules=norm.rules_applied,
             )
+        retrieval_query = norm.normalized
 
         query_embedding = self.embedding.encode([retrieval_query], task="query")[0]
         fetch_k = self._fetch_top_k(request.top_k)

@@ -4,6 +4,7 @@ import chromadb
 
 from app.settings import Settings
 from app.core.chunker import TextChunker, SemanticChunker
+from app.core.query_normalizer import QueryNormalizerBase, get_normalizer
 from app.core.reranker import RerankerBase, NullReranker, FastEmbedReranker
 from app.core.embeddings import create_embedding_service
 from app.core.vector_store import VectorStoreBase
@@ -84,6 +85,12 @@ def get_llm_client() -> LLMClientBase:
         f"To add a new provider: create app/core/backends/<provider>.py, "
         f"implement LLMClientBase, and add an elif branch here."
     )
+
+
+@lru_cache
+def get_query_normalizer() -> QueryNormalizerBase:
+    settings = get_settings()
+    return get_normalizer(settings.query_normalizer_domain)
 
 
 @lru_cache
