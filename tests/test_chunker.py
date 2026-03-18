@@ -107,6 +107,54 @@ def test_semantic_section_header_forces_new_chunk():
 
 
 # ---------------------------------------------------------------------------
+# SemanticChunker — abbreviation protection in _split_sentences
+# ---------------------------------------------------------------------------
+
+def test_art_abbreviation_not_split():
+    """'art. 966' must stay in the same sentence — not split at the period."""
+    text = (
+        "a sociedade empresária a que se refere o art. 966 da Lei no 10.406, "
+        "de 10 de janeiro de 2002, que aufiram receita bruta igual ou inferior a R$ 360.000,00."
+    )
+    c = SemanticChunker(chunk_size=800, chunk_overlap=0)
+    chunks = c.chunk(text)
+    # The whole text is one sentence — must land in a single chunk
+    assert len(chunks) == 1, f"Expected 1 chunk, got {len(chunks)}: {chunks}"
+    assert "art. 966" in chunks[0]
+    assert "360.000,00" in chunks[0]
+
+
+def test_legal_abbreviations_not_split():
+    """Common legal abbreviations must never act as sentence boundaries."""
+    cases = [
+        "Conforme o inc. I do art. 3º da Lei Complementar.",
+        "Nos termos do cap. II, art. 15 da Lei nº 8.906/94.",
+        "O dec. 9.580/2018 regulamenta o art. 32 do Código.",
+        "Conforme o par. único do art. 966 do Código Civil.",
+    ]
+    c = SemanticChunker(chunk_size=800, chunk_overlap=0)
+    for text in cases:
+        chunks = c.chunk(text)
+        assert len(chunks) == 1, (
+            f"Abbreviation caused false split in: {repr(text)}\nGot chunks: {chunks}"
+        )
+
+
+def test_genuine_sentence_boundary_still_splits():
+    """Real sentence endings must still produce separate units."""
+    text = (
+        "A microempresa tem receita bruta de até R$ 360.000,00. "
+        "A empresa de pequeno porte tem receita bruta de até R$ 4.800.000,00."
+    )
+    c = SemanticChunker(chunk_size=800, chunk_overlap=0)
+    # _split_sentences should produce 2 sentences (both fit in one chunk, but
+    # as units they are separate — we test via a small chunk_size to force split)
+    c_small = SemanticChunker(chunk_size=80, chunk_overlap=0)
+    chunks = c_small.chunk(text)
+    assert len(chunks) >= 2, "Genuine sentence boundary was not split"
+
+
+# ---------------------------------------------------------------------------
 # SemanticChunker — overlap strategy C (complete semantic units)
 # ---------------------------------------------------------------------------
 

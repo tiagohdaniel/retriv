@@ -1,6 +1,24 @@
 import re
 from typing import NamedTuple
 
+# Abbreviations that must never be treated as sentence boundaries.
+# Used by SemanticChunker._split_sentences via a placeholder substitution:
+# the period in each match is temporarily replaced with \x00 before sentence
+# splitting and restored afterwards.
+#
+# Covers legal/fiscal Portuguese:
+#   art / arts / dec / res / port / lei / ord  — legal references
+#   inc / al / cap / sec / par / tit           — document structure
+#   no / nº / nr / n                           — numbering
+#   cf / op / cit / ibid / apud                — citations
+#   sr / sra / dr / dra / prof / eng / adv     — titles/treatment
+_ABBREV_RE = re.compile(
+    r'\b(arts?|inc|al|cap|sec|par|tit|vol|p[aá]g?|dec|res|port|lei|ord'
+    r'|n[oº°r]?|cf|op|cit|ibid|apud|sr[a]?|dr[a]?|prof|eng|adv|proc)\.'
+    r'(?=\s)',
+    re.IGNORECASE,
+)
+
 
 class _Unit(NamedTuple):
     """Internal representation of a text unit produced during chunking.
@@ -78,11 +96,16 @@ class SemanticChunker:
         return [p.strip() for p in paragraphs if p.strip()]
 
     def _split_sentences(self, text: str) -> list[str]:
-        """Split at sentence-ending punctuation followed by a space and uppercase."""
-        # Handles Portuguese and English sentence endings.
-        # Negative lookbehind avoids splitting on common abbreviations (e.g. "Sr.", "Art.").
-        parts = re.split(r'(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÀÃÕÂÊÔÇ\"\'\d(])', text)
-        sentences = [s.strip() for s in parts if s.strip()]
+        """Split at sentence-ending punctuation followed by a space and uppercase or digit.
+
+        Abbreviations common in legal/fiscal Portuguese (art., inc., nº., dec., …)
+        are protected via a placeholder substitution: their periods are temporarily
+        replaced with \\x00 before splitting and restored afterwards. This prevents
+        false splits on "art. 966", "inc. I", "cap. II", etc.
+        """
+        protected = _ABBREV_RE.sub(lambda m: m.group().replace('.', '\x00'), text)
+        parts = re.split(r'(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÀÃÕÂÊÔÇ\"\'\d(])', protected)
+        sentences = [s.replace('\x00', '.').strip() for s in parts if s.strip()]
         return sentences if sentences else [text.strip()]
 
     def _units_from(self, paragraphs: list[str]) -> list[_Unit]:
