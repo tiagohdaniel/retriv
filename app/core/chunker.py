@@ -228,22 +228,25 @@ class SemanticChunker:
             if (proposed_len > self.chunk_size or force_break) and current_parts:
                 # Flush
                 chunks.append("\n\n".join(p.text for p in current_parts))
-                # Seed next chunk with overlap
-                overlap = self._overlap_prefix(current_parts)
-                current_parts = overlap
-                current_len = sum(len(p.text) for p in overlap) + max(0, len(overlap) - 1) * 2
-
-                # Guard: if the overlap alone leaves no room for the incoming unit,
-                # the next flush would produce an oversized chunk. Resolve now:
-                # — semantic overlap: emit as a standalone chunk (complete sentence,
-                #   useful as a bridge for retrieval) then start fresh.
-                # — hard-split overlap: just discard it (a 50-char fragment is not
-                #   worth a standalone chunk and would pollute the index).
-                if current_parts and current_len + 2 + len(unit.text) > self.chunk_size:
-                    if any(not p.hard for p in current_parts):
-                        chunks.append("\n\n".join(p.text for p in current_parts))
+                if force_break:
+                    # Section header starts a fresh chunk — no overlap from the
+                    # previous section. Carrying context across section boundaries
+                    # splits the header from its content and pollutes retrieval.
                     current_parts = []
                     current_len = 0
+                else:
+                    # Seed next chunk with overlap
+                    overlap = self._overlap_prefix(current_parts)
+                    current_parts = overlap
+                    current_len = sum(len(p.text) for p in overlap) + max(0, len(overlap) - 1) * 2
+
+                    # Guard: if the overlap alone leaves no room for the incoming unit,
+                    # the next flush would produce an oversized chunk. Resolve now:
+                    if current_parts and current_len + 2 + len(unit.text) > self.chunk_size:
+                        if any(not p.hard for p in current_parts):
+                            chunks.append("\n\n".join(p.text for p in current_parts))
+                        current_parts = []
+                        current_len = 0
 
             current_parts.append(unit)
             current_len += (2 if len(current_parts) > 1 else 0) + len(unit.text)
