@@ -14,7 +14,13 @@ class LLMClientBase(ABC):
     """
 
     @abstractmethod
-    async def generate(self, prompt: str, max_tokens: int = 1000) -> dict: ...
+    async def generate(
+        self,
+        prompt: str,
+        max_tokens: int = 1000,
+        model_override: str | None = None,
+        system: str | None = None,
+    ) -> dict: ...
 
     @abstractmethod
     async def stream(self, prompt: str, max_tokens: int = 1000): ...

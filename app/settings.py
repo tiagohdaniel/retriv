@@ -80,6 +80,14 @@ class Settings(BaseSettings):
     # Options: "fiscal" (legal/fiscal PT), "none" (disabled)
     query_normalizer_domain: str = "fiscal"
 
+    # HyDE — Hypothetical Document Embeddings
+    # Before embedding the user query, ask the LLM to generate a short hypothetical passage
+    # that would answer the question. The passage is written in the same vocabulary/register
+    # as the indexed documents, closing the vocabulary gap without domain-specific rules.
+    # Adds 1 LLM call (hyde_model) per query. Replaces QueryNormalizer long-term.
+    hyde_enabled: bool = False
+    hyde_model: str = "claude-haiku-4-5-20251001"  # fast/cheap model for hypothesis generation
+
     # RAG evaluation — disabled by default (requires Langfuse account)
     eval_enabled: bool = False
     eval_model: str = "claude-haiku-4-5-20251001"  # lightweight model for LLM-as-judge
