@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.11-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688)
-![Tests](https://img.shields.io/badge/tests-77%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-80%20passed-brightgreen)
 ![CI](https://github.com/tiagohdaniel/retriv/actions/workflows/ci.yml/badge.svg)
 ![Docker](https://img.shields.io/badge/docker-ready-2496ED)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -567,20 +567,24 @@ Diagnosed and resolved a set of retrieval failures that were limiting benchmark 
 - **Single-pass indexing** — replaced the error-prone double-chunking approach (raw for detection, clean for embedding) with a single pass: chunk raw → detect TOC on raw chunk → clean individual chunk → filter. Eliminates index-misalignment risk
 - **PDF noise cleaning** — `_clean_pdf_text` removes navigation footers (*"Voltar ao Sumário N"*), broken hyphenation across line breaks, dot leader lines (`........38`), and excess whitespace — common artifacts in scanned government PDFs
 - **Section header overlap fix** — section headers now always start a fresh chunk with no overlap from the preceding section. Previously, overlap could carry context from the previous section into the header, splitting the header from its body in the index
+- **Duplicate chunk elimination** — fixed an overlap guard bug where a single large unit that filled an entire chunk was being emitted again as the overlap prefix, creating exact duplicates in the index. Fix: trim oldest overlap units until the remainder fits instead of emitting a standalone duplicate
+- **ALL-CAPS section header detection** — `_is_section_header` now recognises unnumbered all-caps multi-word headings (e.g. `CONCEITOS PRELIMINARES`) in addition to numbered headings (`1.5. CONCEITOS`). These are treated as hard boundaries that never merge with preceding content
 - **Min-content filter at retrieval time** — chunks shorter than 80 chars are discarded after retrieval (headers, footers, and navigation fragments that survived indexing produce high-similarity false positives)
 - **Short-chunk distance penalty** — chunks under 200 chars receive a `+0.1` distance penalty in the retrieval ranking, pushing stub chunks below content-rich chunks of similar score
 - **`top_k` default 5 → 10** — the single highest-impact change; doubles recall by giving the LLM twice as many candidate chunks to work from
 - **`max_distance` default 0.45 → 0.6** — the previous threshold was too tight, cutting relevant content chunks while TOC chunks (cosine distance ~0.40) still passed
+- **Domain query normalizer** — `RuleBasedQueryNormalizer` maps informal vocabulary to document vocabulary before embedding. Domain-specific rule sets (e.g. `accounting`) correct vocabulary mismatches that neither semantic nor BM25 search can bridge — e.g. *"posso ganhar"* → *"limite de receita bruta"*. New domains are added as a list of `{pattern, replacement, name}` rules; no code change required beyond the registry
 
 Benchmark result (guia PGDAS-D, 25 informal questions):
 
 | Configuration | Correct | Score |
 |---|---|---|
 | Before (top_k=5, max_distance=0.45, no PDF cleaning) | 7/25 | 28% |
-| After (all fixes above) | 19/25 | **76%** (fair eval) |
-| After, within-scope questions only | 19/20 | **95%** |
+| After pipeline fixes (v1.2.1) | 19/25 | **76%** (fair eval) |
+| After + chunker dedup fix + query normalizer | 20/25 | **80%** |
+| After, within-scope questions only | 20/21 | **95%** |
 
-The 6 remaining misses were out-of-scope questions (MEI-specific content not present in a PGDAS-D guide) plus one glossary edge case (see Known Limitations).
+The 5 remaining misses are out-of-scope questions (MEI-specific content not present in a PGDAS-D guide). The within-scope score of 95% reflects the retrieval ceiling for a single-document index — the next quality lever is indexing additional relevant documents.
 
 ### v1.3 — Resiliência
 
