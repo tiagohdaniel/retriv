@@ -40,7 +40,7 @@ class AskRequest(BaseModel):
         default=None, description="Restrict search to specific sources"
     )
     max_distance: float = Field(
-        default=0.45, ge=0.0, le=2.0,
+        default=0.6, ge=0.0, le=2.0,
         description="Maximum cosine distance (0=identical, 2=opposite). Chunks above this threshold are discarded."
     )
     history: list[ConversationMessage] | None = Field(
