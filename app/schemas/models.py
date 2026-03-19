@@ -35,7 +35,7 @@ class ConversationMessage(BaseModel):
 
 class AskRequest(BaseModel):
     question: str = Field(min_length=5, max_length=1_000, description="Natural language question")
-    top_k: int = Field(default=5, ge=1, le=20, description="Number of chunks to retrieve")
+    top_k: int = Field(default=10, ge=1, le=20, description="Number of chunks to retrieve")
     source_ids: list[str] | None = Field(
         default=None, description="Restrict search to specific sources"
     )
