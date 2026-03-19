@@ -16,6 +16,7 @@ _MODEL_TASK_PREFIXES: dict[str, dict[str, str]] = {
         "document": "passage: ",
         "query":    "query: ",
     },
+    # thenlper/gte-large does not require task prefixes — absent from this dict intentionally
 }
 
 
