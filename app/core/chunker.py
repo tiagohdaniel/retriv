@@ -151,13 +151,26 @@ class SemanticChunker:
         return parts
 
     def _is_section_header(self, unit: str) -> bool:
-        """Return True if unit starts with a numbered section heading.
+        """Return True if unit starts with a section heading.
 
-        Matches patterns like "1.5. CONCEITOS" or "2.3.1. DEFINIÇÃO" —
-        common in Brazilian government and legal documents. These are strong
-        semantic boundaries that should never be merged with preceding content.
+        Two patterns are recognised:
+        - Numbered: "1.5. CONCEITOS", "2.3.1. DEFINIÇÃO" — common in Brazilian
+          government and legal documents.
+        - ALL-CAPS multi-word: "CONCEITOS PRELIMINARES", "DECLARAÇÃO MENSAL" —
+          unnumbered headings found in PDF regulatory documents. Two or more
+          consecutive ALL-CAPS words (letters only, no punctuation) on the
+          first line qualify. Single-word all-caps strings (acronyms, labels
+          like "IMPORTANTE") are intentionally excluded to avoid false breaks.
+
+        These are strong semantic boundaries that should never be merged with
+        preceding content.
         """
-        return bool(re.match(r'^\d{1,2}(\.\d{1,2}){1,3}\.?\s+[A-ZÁÉÍÓÚÀÃÕÂÊÔÇ]{2}', unit))
+        # Numbered heading: "1.5. CONCEITOS", "2.3.1. DEFINIÇÃO"
+        if bool(re.match(r'^\d{1,2}(\.\d{1,2}){1,3}\.?\s+[A-ZÁÉÍÓÚÀÃÕÂÊÔÇ]{2}', unit)):
+            return True
+        # ALL-CAPS multi-word heading on the first line (letters and spaces only)
+        first_line = unit.split('\n')[0].strip()
+        return bool(re.match(r'^[A-ZÁÉÍÓÚÀÃÕÂÊÔÇ]{2,}(\s+[A-ZÁÉÍÓÚÀÃÕÂÊÔÇ]{2,})+$', first_line))
 
     def _overlap_prefix(self, current_parts: list[_Unit]) -> list[_Unit]:
         """Return units from the tail of the current chunk to seed the next one.
@@ -241,11 +254,18 @@ class SemanticChunker:
                     current_len = sum(len(p.text) for p in overlap) + max(0, len(overlap) - 1) * 2
 
                     # Guard: if the overlap alone leaves no room for the incoming unit,
-                    # the next flush would produce an oversized chunk. Resolve now:
-                    if current_parts and current_len + 2 + len(unit.text) > self.chunk_size:
-                        if any(not p.hard for p in current_parts):
-                            chunks.append("\n\n".join(p.text for p in current_parts))
-                        current_parts = []
+                    # trim the oldest overlap units one by one until the remainder
+                    # fits — or until the overlap is empty.
+                    #
+                    # Trimming (not emitting) avoids creating a standalone chunk that
+                    # is identical to the one just flushed. That duplicate arose when
+                    # the chunk had a single large unit that became the sole overlap:
+                    # emitting it again added nothing. Trimming preserves as much
+                    # genuine overlap as possible while preventing the duplicate.
+                    while current_parts and current_len + 2 + len(unit.text) > self.chunk_size:
+                        removed = current_parts.pop(0)
+                        current_len -= len(removed.text) + (2 if current_parts else 0)
+                    if not current_parts:
                         current_len = 0
 
             current_parts.append(unit)
