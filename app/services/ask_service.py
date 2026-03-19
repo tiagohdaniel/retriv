@@ -201,6 +201,22 @@ class AskService:
                 tenant_id=tenant_id,
             )
 
+        # Discard near-empty chunks (headers, footers, navigation fragments that
+        # survived indexing). These produce false positives — high similarity to
+        # the query but no useful content for the LLM.
+        _MIN_CONTENT = 80
+        docs = [d for d in docs if len(d.get("document", "").strip()) >= _MIN_CONTENT]
+
+        # Penalize chunks shorter than 200 chars in the ranking — they are likely
+        # section titles or stubs without body text. A small distance penalty pushes
+        # them down when a longer, content-rich chunk is close in score.
+        def _adjusted_distance(doc: dict) -> float:
+            if len(doc.get("document", "").strip()) < 200:
+                return doc["distance"] + 0.1
+            return doc["distance"]
+
+        docs.sort(key=_adjusted_distance)
+
         if self.source_diversity_enabled and docs:
             pre_diversity = len(docs)
             docs = self._apply_source_diversity(docs, self.source_diversity_max_per_source)

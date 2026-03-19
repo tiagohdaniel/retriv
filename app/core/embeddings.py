@@ -3,12 +3,21 @@ import hashlib
 EMBEDDING_DIM = 768  # nomic-embed-text-v1.5 output dimensions
 
 
-_TASK_PREFIXES = {
-    "document": "search_document: ",
-    "query": "search_query: ",
+# Per-model task prefixes.
+# nomic-embed-text-v1.5 uses "search_document:" / "search_query:"
+# multilingual-e5-large uses "passage:" / "query:"
+# Models absent from this dict get no prefix (raw text passed through).
+_MODEL_TASK_PREFIXES: dict[str, dict[str, str]] = {
+    "nomic-ai/nomic-embed-text-v1.5": {
+        "document": "search_document: ",
+        "query":    "search_query: ",
+    },
+    "intfloat/multilingual-e5-large": {
+        "document": "passage: ",
+        "query":    "query: ",
+    },
+    # thenlper/gte-large does not require task prefixes — absent from this dict intentionally
 }
-
-_PREFIX_MODELS = {"nomic-ai/nomic-embed-text-v1.5"}
 
 
 class FastEmbedEmbedding:
@@ -18,11 +27,10 @@ class FastEmbedEmbedding:
     tokenization, mean pooling, and L2 normalization internally.
     Designed specifically for production RAG stacks.
 
-    Supports nomic-embed-text-v1.5 natively. The model uses instruction
-    prefixes for best quality:
-      - documents: "search_document: " + text
-      - queries:   "search_query: " + text
-    Pass task="document" when indexing, task="query" when searching.
+    Supports any fastembed model. Models that require instruction prefixes
+    (nomic-embed-text-v1.5, multilingual-e5-large, etc.) are handled via
+    _MODEL_TASK_PREFIXES — pass task="document" when indexing, task="query"
+    when searching and the correct prefix is applied automatically.
     """
 
     def __init__(self, model_name: str) -> None:
@@ -33,11 +41,11 @@ class FastEmbedEmbedding:
         if cache_dir:
             kwargs["cache_dir"] = cache_dir
         self.model = TextEmbedding(model_name=model_name, **kwargs)
-        self._use_prefixes = model_name in _PREFIX_MODELS
+        self._prefixes = _MODEL_TASK_PREFIXES.get(model_name, {})
 
     def encode(self, texts: list[str], task: str = "document") -> list[list[float]]:
-        if self._use_prefixes:
-            prefix = _TASK_PREFIXES.get(task, "")
+        prefix = self._prefixes.get(task, "")
+        if prefix:
             texts = [prefix + t for t in texts]
         return [emb.tolist() for emb in self.model.embed(texts)]
 

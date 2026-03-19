@@ -35,12 +35,12 @@ class ConversationMessage(BaseModel):
 
 class AskRequest(BaseModel):
     question: str = Field(min_length=5, max_length=1_000, description="Natural language question")
-    top_k: int = Field(default=5, ge=1, le=20, description="Number of chunks to retrieve")
+    top_k: int = Field(default=10, ge=1, le=20, description="Number of chunks to retrieve")
     source_ids: list[str] | None = Field(
         default=None, description="Restrict search to specific sources"
     )
     max_distance: float = Field(
-        default=0.45, ge=0.0, le=2.0,
+        default=0.6, ge=0.0, le=2.0,
         description="Maximum cosine distance (0=identical, 2=opposite). Chunks above this threshold are discarded."
     )
     history: list[ConversationMessage] | None = Field(
