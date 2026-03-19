@@ -73,22 +73,18 @@ class IndexService:
         # delete existing chunks first — re-indexing the same source_id is idempotent
         self.vector_store.delete_source(request.source_id, tenant_id=tenant_id)
 
-        content = _clean_pdf_text(request.content)
-        chunks = self.chunker.chunk(content)
-
-        # TOC detection must run on RAW chunks (before further cleaning) because
-        # _clean_pdf_text strips the trailing dots that identify TOC lines.
-        # Re-chunk the original content to get raw chunks for TOC detection,
-        # then use the cleaned chunks for embedding — same positions, different text.
+        # Single-pass: chunk raw → detect TOC on raw chunk → clean each chunk → filter.
+        # This avoids the index alignment risk of double-chunking (raw for detection,
+        # clean for embedding). Both detection and cleaning operate on the same unit.
         raw_chunks = self.chunker.chunk(request.content)
-        toc_mask = {i for i, c in enumerate(raw_chunks) if _is_toc_chunk(c)}
-
-        # Remove TOC entries and near-empty fragments before embedding
-        before = len(chunks)
-        chunks = [
-            c for i, c in enumerate(chunks)
-            if i not in toc_mask and len(c.strip()) >= _MIN_CHUNK_CHARS
-        ]
+        before = len(raw_chunks)
+        chunks = []
+        for raw_chunk in raw_chunks:
+            if _is_toc_chunk(raw_chunk):
+                continue
+            cleaned = _clean_pdf_text(raw_chunk)
+            if len(cleaned.strip()) >= _MIN_CHUNK_CHARS:
+                chunks.append(cleaned)
         filtered = before - len(chunks)
         if filtered:
             logger.debug("index_chunks_filtered", source_id=request.source_id, filtered=filtered)
