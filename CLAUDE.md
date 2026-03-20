@@ -12,14 +12,17 @@ Recebe documentos via `POST /index`, armazena como vetores no ChromaDB, e respon
 ## Arquitetura
 
 ```
-Cliente (dashboard, Magento, qualquer HTTP)
-        │
-        │  X-API-Key → tenant_id
-        ▼
-┌─────────────────────────────────────────┐
-│           FastAPI (routes_*.py)         │
-│   /index  /ask  /ask/stream  /sources   │
-└────────────────┬────────────────────────┘
+Dashboards / Browsers          Agents externos (AGNO, Claude, LangGraph...)
+        │                                      │
+        │  X-API-Key → tenant_id               │  Bearer <api-key> → tenant_id
+        ▼                                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    FastAPI (main.py)                        │
+│                                                             │
+│  REST API                          MCP Server               │
+│  /index  /ask  /ask/stream         /mcp  (Streamable HTTP)  │
+│  /sources  /analyze                5 tools expostos         │
+└────────────────┬────────────────────────────────────────────┘
                  │
         ┌────────▼────────┐
         │   Services      │
@@ -35,6 +38,37 @@ ChromaDB    Anthropic    Langfuse
 
 **Regra principal: o core nunca conhece infraestrutura.**
 Toda dependência de infra é injetada via `dependencies.py`. Nunca modifique `ask_service.py` ou `index_service.py` para acomodar infra — crie um novo adapter em `app/core/backends/`.
+
+---
+
+## MCP Server (`/mcp`)
+
+O retriv expõe um MCP server em `/mcp` usando o transporte Streamable HTTP (padrão MCP spec 2025-03-26). Qualquer agent MCP-compatível (AGNO, Claude Desktop, LangGraph, etc.) se conecta sem precisar escrever um wrapper HTTP customizado.
+
+**Auth:** mesmo mecanismo da REST API — `Authorization: Bearer <api-key>` ou `X-API-Key: <chave>`. Multi-tenant preservado: cada key resolve um `tenant_id` diferente.
+
+**Tools expostas (`app/mcp/server.py`):**
+
+| Tool | O que faz |
+|---|---|
+| `ask` | Pipeline RAG completo: retrieve → LLM → resposta com fontes |
+| `search` | Retrieval puro sem LLM — para agents que fazem seu próprio prompting |
+| `index_document` | Indexa conteúdo texto na knowledge base |
+| `list_sources` | Lista fontes indexadas do tenant |
+| `delete_source` | Remove uma fonte do índice |
+
+**Padrão de integração nos `*-agent`:**
+```python
+# accounting-agent, ecommerce-agent, insurance-agent...
+from agno.tools.mcp import MCPTools
+
+retriv_tools = MCPTools(
+    url="https://retriv-production.up.railway.app/mcp",
+    headers={"Authorization": "Bearer chave-do-tenant"},
+)
+agent = Agent(model=Claude(...), tools=[retriv_tools, DomainSpecificTool()])
+```
+Zero código de integração manual. Sem `RetrivTool` customizada em cada agent.
 
 ---
 
@@ -144,30 +178,38 @@ app/
 ├── api/
 │   ├── routes_ask.py           # POST /ask, POST /ask/stream
 │   ├── routes_index.py         # POST /index
-│   └── routes_sources.py       # GET /sources, DELETE /sources/{id}
+│   ├── routes_sources.py       # GET /sources, DELETE /sources/{id}
+│   └── routes_analyze.py       # POST /analyze
+├── mcp/
+│   └── server.py               # MCP server — 5 tools para agents externos
 ├── core/
 │   ├── auth.py                 # verify_api_key → retorna tenant_id | None
 │   ├── vector_store.py         # VectorStoreBase (contrato — não modificar)
 │   ├── llm_client.py           # LLMClientBase (contrato — não modificar)
 │   ├── observability.py        # ObservabilityBase (contrato — não modificar)
-│   ├── chunker.py              # TextChunker
+│   ├── data_analyzer.py        # DataAnalyzerBase (contrato — não modificar)
+│   ├── chunker.py              # SemanticChunker + TextChunker
 │   ├── embeddings.py           # create_embedding_service (fastembed/ONNX)
+│   ├── hybrid_search.py        # BM25Searcher + RRF merge
+│   ├── reranker.py             # FastEmbedReranker + NullReranker
 │   ├── rate_limit.py           # SlowAPI
 │   ├── logging_config.py       # structlog JSON
 │   ├── metrics.py              # Prometheus counters
 │   └── backends/
 │       ├── chroma.py                    # ChromaVectorStore — ativo
 │       ├── anthropic.py                 # AnthropicClient — ativo
+│       ├── pandas_analyzer.py           # PandasAnalyzer — analytics pipeline
 │       ├── langfuse_observability.py    # LangfuseObservability — ativo se EVAL_ENABLED=true
 │       └── null_observability.py        # NullObservability — fallback (no-op)
 ├── services/
 │   ├── ask_service.py          # RAG: embed → search → prompt → LLM → trace
-│   └── index_service.py        # chunk → embed → upsert no vector store
+│   ├── index_service.py        # chunk → embed → upsert no vector store
+│   └── analytics_service.py    # analytics: decode → pandas → LLM format
 ├── schemas/
 │   └── models.py               # Contratos públicos da API (Pydantic) — apenas additive
 ├── dependencies.py             # Wiring: instancia e injeta todos os serviços via FastAPI Depends
 ├── settings.py                 # Todas as configs via env vars (pydantic-settings)
-└── main.py                     # App FastAPI + middlewares + routers
+└── main.py                     # App FastAPI + middlewares + routers + /mcp mount
 ```
 
 ---
@@ -187,39 +229,49 @@ app/
 - `DataAnalyzerBase` port + `PandasAnalyzer` adapter — hexagonal intocado
 - Os **conectores** com fontes específicas do cliente ficam no `*-agent`, não aqui
 
+### v1.3 — MCP Server — ENTREGUE
+- `GET /mcp` — endpoint MCP Streamable HTTP (padrão MCP spec 2025-03-26)
+- 5 tools: `ask`, `search`, `index_document`, `list_sources`, `delete_source`
+- Qualquer agent MCP-compatível (AGNO, Claude Desktop, LangGraph) conecta sem wrapper customizado
+- Auth reutiliza `API_KEYS` — multi-tenant preservado
+- Removido: `AgentOrchestrator`, `ToolBase`, `AgentService` — orchestração pertence aos `*-agent`
+
 ---
 
 ## O que NÃO pertence ao retriv
 
 **Tools de domínio específico nunca entram aqui.**
 
-O retriv é o core genérico — RAG puro. Quando um cliente precisar de agents com ações específicas (abrir sinistro, rastrear pedido, protocolar documento), isso vai em um repositório separado que importa o retriv como dependência.
+O retriv é o core genérico — knowledge engine com MCP. Quando um cliente precisar de agents com ações específicas (abrir sinistro, rastrear pedido, protocolar documento), isso vai em um repositório separado que usa AGNO como framework e se conecta ao retriv via MCP.
 
 **Convenção de nomes:** o repositório se chama pelo **domínio** em inglês, nunca pelo nome da empresa.
 
 ```
 # ERRADO — nunca fazer isso:
-app/agents/guerreiro/tools/abrir_sinistro.py  ← lógica de negócio aqui dentro do retriv
+app/agents/guerreiro/tools/abrir_sinistro.py  ← lógica de negócio dentro do retriv
 
 # ERRADO — nome da empresa, não do domínio:
 repositório: guerreiro-agent/
 
-# CERTO — nome do domínio em inglês:
+# CERTO — nome do domínio + AGNO como framework:
 repositório: insurance-agent/
-    requirements.txt → retriv @ git+https://...
-    tools/abrir_sinistro.py
+    requirements.txt → agno, anthropic, httpx
+    tools/abrir_sinistro.py   ← domain logic
+    agent.py                  ← AGNO Agent com MCPTools apontando para /mcp
 
 repositório: accounting-agent/
-    requirements.txt → retriv @ git+https://...
+    requirements.txt → agno, anthropic, httpx
     tools/simulador_fiscal.py
+    agent.py
 ```
 
 Agents verticais planejados (servem múltiplos clientes do mesmo setor):
 - `insurance-agent` — seguradoras (1º cliente: Guerreiro)
 - `accounting-agent` — escritórios contábeis (1º cliente: Maranata)
+- `ecommerce-agent` — e-commerce (consome também a REST API do retriv-magento2)
 - `legal-agent` — escritórios jurídicos
 
-O que **pode** ficar no retriv: contratos genéricos (`AgentBase`, `ToolBase`, `AgentOrchestrator`) — são só interfaces, sem lógica de domínio.
+**Nada de `AgentOrchestrator`, `ToolBase` ou `AgentService` dentro do retriv** — esses arquivos foram removidos. A orchestração de agents acontece nos repositórios `*-agent`, não no core. O MCP server em `app/mcp/server.py` é o único ponto de extensão para agents.
 
 ---
 

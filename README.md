@@ -20,9 +20,10 @@ Built with **FastAPI**, **ChromaDB**, **fastembed** (ONNX Runtime, no PyTorch), 
 - **Stream** responses token-by-token via `POST /ask/stream` — SSE for real-time output
 - **Analyze** structured data via `POST /analyze` — send a CSV/XLSX/JSON file and a natural language question; pandas computes deterministically, the LLM only formats the result
 - **Manage** indexed sources via `GET /sources` (paginated) and `DELETE /sources/{source_id}`
+- **Connect agents** via `GET /mcp` — MCP server (Streamable HTTP, MCP spec 2025-03-26); any MCP-compatible agent (AGNO, Claude Desktop, LangGraph) connects without custom HTTP wrappers
 - **Observe** via Prometheus metrics at `GET /metrics` — aggregated across all Gunicorn workers
 - **Evaluate** RAG quality automatically via LLM-as-judge scoring sent to Langfuse (optional)
-- **Secure** via `X-API-Key` header — disabled by default for local dev, enabled in production
+- **Secure** via `X-API-Key` or `Authorization: Bearer` — disabled by default for local dev, enabled in production
 - No GPU required — embeddings run via ONNX Runtime; tests run without API keys
 
 ---
@@ -311,6 +312,7 @@ Mitigation: index the glossary as a standalone source with repeated acronym → 
 | `POST` | `/analyze` | Yes | Analyze structured data (CSV/XLSX/JSON) with a natural language question |
 | `GET` | `/sources` | Yes | List indexed sources (paginated) |
 | `DELETE` | `/sources/{source_id}` | Yes | Remove all chunks for a source |
+| `*` | `/mcp` | Yes | MCP server — 5 tools for external agents (Streamable HTTP transport) |
 | `GET` | `/health` | No | Health check (verifies ChromaDB connectivity) |
 | `GET` | `/metrics` | No | Prometheus metrics (aggregated across workers) |
 | `GET` | `/docs` | No | Swagger UI |
@@ -441,6 +443,8 @@ app/
 │   ├── routes_ask.py
 │   ├── routes_sources.py
 │   └── routes_analyze.py
+├── mcp/
+│   └── server.py                # MCP server — 5 tools for external agents
 ├── schemas/models.py
 ├── dependencies.py              # DI wiring
 ├── settings.py                  # Config from .env
@@ -523,6 +527,7 @@ docker-compose.yml
 
 - **Python 3.11**
 - **FastAPI** + Uvicorn + Gunicorn (multi-worker)
+- **fastmcp** — MCP server (Streamable HTTP transport, MCP spec 2025-03-26)
 - **ChromaDB** — vector store (embedded or server mode)
 - **fastembed** — `nomic-embed-text-v1.5` via ONNX Runtime, no GPU required
 - **rank-bm25** — BM25Okapi for keyword search in hybrid mode
@@ -586,7 +591,15 @@ Benchmark result (guia PGDAS-D, 25 informal questions):
 
 The 5 remaining misses are out-of-scope questions (MEI-specific content not present in a PGDAS-D guide). The within-scope score of 95% reflects the retrieval ceiling for a single-document index — the next quality lever is indexing additional relevant documents.
 
-### v1.3 — Resiliência
+### v1.3 — MCP Server ✅ complete
+
+- **`GET /mcp`** — MCP Streamable HTTP server (MCP spec 2025-03-26)
+- 5 tools: `ask`, `search`, `index_document`, `list_sources`, `delete_source`
+- Any MCP-compatible agent (AGNO, Claude Desktop, LangGraph, etc.) connects without custom HTTP wrappers
+- Auth reuses `API_KEYS` — multi-tenant isolation preserved across all tools
+- Removed `AgentOrchestrator` / `ToolBase` stubs — agent orchestration belongs in domain agent repos
+
+### v1.4 — Resiliência
 
 - **Redis job store** — replace `/tmp` with Redis to survive restarts and multiple workers
 - **Automatic retry** — retry failed indexing jobs with exponential backoff
