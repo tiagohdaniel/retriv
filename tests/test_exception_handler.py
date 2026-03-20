@@ -1,4 +1,4 @@
-"""Testa que erros não tratados retornam 500 genérico sem expor internals."""
+"""Test that unhandled errors return a generic 500 without exposing internals."""
 
 import pytest
 from fastapi import HTTPException
@@ -9,7 +9,7 @@ from app.main import app
 
 @pytest.fixture
 def client_with_bomb():
-    """Registra uma rota que lança uma Exception não tratada."""
+    """Register a route that raises an unhandled Exception."""
 
     @app.get("/_test_bomb")
     def _bomb():
@@ -18,7 +18,7 @@ def client_with_bomb():
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c
 
-    # Remove a rota temporária
+    # Remove the temporary route
     app.routes[:] = [r for r in app.routes if getattr(r, "path", None) != "/_test_bomb"]
 
 

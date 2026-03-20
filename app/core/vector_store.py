@@ -79,5 +79,5 @@ class VectorStoreBase(ABC):
 
     @abstractmethod
     def ping(self) -> None:
-        """Verifica conectividade com o backend. Lança exceção se indisponível."""
+        """Verify backend connectivity. Raises if unavailable."""
         ...
