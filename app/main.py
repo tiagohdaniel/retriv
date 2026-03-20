@@ -46,14 +46,66 @@ _cors_origins = (
     else [o.strip() for o in _settings.cors_origins.split(",")]
 )
 
+_tags_metadata = [
+    {
+        "name": "indexing",
+        "description": (
+            "Ingest documents into the vector store. "
+            "Indexing is **asynchronous** — POST `/index` returns a `job_id` immediately; "
+            "poll `/index/status/{job_id}` to track progress. "
+            "Documents are semantically chunked, batch-embedded via ONNX, and upserted into ChromaDB."
+        ),
+    },
+    {
+        "name": "search",
+        "description": (
+            "Query indexed documents with natural language. "
+            "Uses **hybrid retrieval** (BM25 + dense semantic search) merged via Reciprocal Rank Fusion, "
+            "optionally reranked by a cross-encoder model before being sent to the LLM. "
+            "Supports both blocking JSON and **SSE streaming** responses."
+        ),
+    },
+    {
+        "name": "sources",
+        "description": "List and delete indexed sources. Deletions are scoped to the authenticated tenant.",
+    },
+    {
+        "name": "analytics",
+        "description": (
+            "Run structured analysis over tabular data (CSV/Excel). "
+            "Deterministic aggregations via pandas; LLM formats the result — never calculates."
+        ),
+    },
+    {
+        "name": "system",
+        "description": "Health check and Prometheus metrics.",
+    },
+]
+
 app = FastAPI(
     title="retriv",
     description=(
-        "Domain-agnostic RAG API.\n\n"
-        "Index any text content, ask natural language questions — "
-        "answers are grounded on retrieved chunks with source references."
+        "**Production RAG engine — multi-tenant, domain-agnostic.**\n\n"
+        "retriv lets you index any text content and query it with natural language. "
+        "Answers are grounded on retrieved document chunks with source references.\n\n"
+        "### Pipeline\n"
+        "```\n"
+        "POST /index  →  semantic chunking  →  ONNX batch embedding  →  ChromaDB upsert\n"
+        "POST /ask    →  hybrid retrieval (BM25 + dense)  →  RRF merge  →  reranker  →  LLM\n"
+        "```\n\n"
+        "### Key features\n"
+        "- **Hybrid search** — BM25 keyword + semantic dense retrieval merged via RRF\n"
+        "- **Cross-encoder reranker** — second-pass scoring for precision\n"
+        "- **Semantic chunking** — paragraph-aware splitting, not fixed-size windows\n"
+        "- **Multi-tenancy** — each API key maps to an isolated tenant; zero data bleed\n"
+        "- **MCP server** — AI agents (AGNO, LangGraph, Claude Desktop) connect at `/mcp`\n"
+        "- **SSE streaming** — token-by-token delivery via `/ask/stream`\n"
+        "- **No GPU required** — embeddings run via ONNX Runtime\n\n"
+        "### Authentication\n"
+        "Pass your API key in the `X-API-Key` header on every request."
     ),
     version=_settings.app_version,
+    openapi_tags=_tags_metadata,
 )
 
 app.state.limiter = limiter
