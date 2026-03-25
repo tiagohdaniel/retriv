@@ -312,7 +312,7 @@ Mitigation: index the glossary as a standalone source with repeated acronym → 
 | `POST` | `/analyze` | Yes | Analyze structured data (CSV/XLSX/JSON) with a natural language question |
 | `GET` | `/sources` | Yes | List indexed sources (paginated) |
 | `DELETE` | `/sources/{source_id}` | Yes | Remove all chunks for a source |
-| `*` | `/mcp` | Yes | MCP server — 5 tools for external agents (Streamable HTTP transport) |
+| `*` | `/mcp/mcp` | Yes | MCP server — 5 tools for external agents (Streamable HTTP transport). Note: FastMCP's `http_app()` adds an internal `/mcp` segment, so when mounted at `/mcp` the full path becomes `/mcp/mcp`. |
 | `GET` | `/health` | No | Health check (verifies ChromaDB connectivity) |
 | `GET` | `/metrics` | No | Prometheus metrics (aggregated across workers) |
 | `GET` | `/docs` | No | Swagger UI |
@@ -593,11 +593,12 @@ The 5 remaining misses are out-of-scope questions (MEI-specific content not pres
 
 ### v1.3 — MCP Server ✅ complete
 
-- **`GET /mcp`** — MCP Streamable HTTP server (MCP spec 2025-03-26)
+- **`/mcp/mcp`** — MCP Streamable HTTP server (MCP spec 2025-03-26)
 - 5 tools: `ask`, `search`, `index_document`, `list_sources`, `delete_source`
 - Any MCP-compatible agent (AGNO, Claude Desktop, LangGraph, etc.) connects without custom HTTP wrappers
 - Auth reuses `API_KEYS` — multi-tenant isolation preserved across all tools
 - Removed `AgentOrchestrator` / `ToolBase` stubs — agent orchestration belongs in domain agent repos
+- **Integration note:** FastMCP requires its `lifespan` to be wired into the FastAPI instance (`lifespan=_mcp_http_app.lifespan`) — without this the `StreamableHTTPSessionManager` is never initialized and all MCP requests return 500. See `app/main.py`.
 
 ### v1.4 — Resiliência
 
