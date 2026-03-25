@@ -2,6 +2,7 @@ import base64
 import os
 import secrets
 import traceback
+from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import Depends, FastAPI, Request
@@ -40,6 +41,17 @@ def _maybe_clear_collection() -> None:
 
 
 _maybe_clear_collection()
+
+# MCP HTTP app must be created before FastAPI so its lifespan can be wired in
+_mcp_http_app = mcp.http_app()
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    async with _mcp_http_app.lifespan(app):
+        yield
+
+
 _cors_origins = (
     ["*"]
     if _settings.cors_origins.strip() == "*"
@@ -83,6 +95,7 @@ _tags_metadata = [
 ]
 
 app = FastAPI(
+    lifespan=_lifespan,
     title="retriv",
     description=(
         "**Production RAG engine — multi-tenant, domain-agnostic.**\n\n"
@@ -137,9 +150,11 @@ app.include_router(routes_sources.router, tags=["sources"])
 app.include_router(routes_analyze.router, tags=["analytics"])
 
 # MCP server — Streamable HTTP transport (MCP spec 2025-03-26)
-# External agents (AGNO, Claude Desktop, LangGraph, etc.) connect at /mcp
+# External agents (AGNO, Claude Desktop, LangGraph, etc.) connect at /mcp/mcp
 # using the same API key auth as the REST endpoints.
-app.mount("/mcp", mcp.http_app())
+# Note: FastMCP's http_app() routes to /mcp internally, so the full path
+# when mounted at /mcp becomes /mcp/mcp.
+app.mount("/mcp", _mcp_http_app)
 
 def _with_basic_auth(asgi_app):
     """Wrap an ASGI app with Basic auth when METRICS_USERNAME/PASSWORD are set."""
