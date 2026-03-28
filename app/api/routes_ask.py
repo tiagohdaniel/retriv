@@ -45,6 +45,8 @@ async def ask_question(
         source_diversity_max_per_source=settings.source_diversity_max_per_source,
         neighbor_expansion_enabled=settings.neighbor_expansion_enabled,
         query_normalizer=query_normalizer,
+        hyde_enabled=settings.hyde_enabled,
+        hyde_model=settings.hyde_model,
     )
     return await service.ask(body, background_tasks=background_tasks, tenant_id=tenant_id)
 
@@ -76,6 +78,8 @@ async def ask_question_stream(
         source_diversity_max_per_source=settings.source_diversity_max_per_source,
         neighbor_expansion_enabled=settings.neighbor_expansion_enabled,
         query_normalizer=query_normalizer,
+        hyde_enabled=settings.hyde_enabled,
+        hyde_model=settings.hyde_model,
     )
 
     async def event_stream():
